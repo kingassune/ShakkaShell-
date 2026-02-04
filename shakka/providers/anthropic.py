@@ -82,11 +82,13 @@ class AnthropicProvider(LLMProvider):
             if "```json" in content:
                 json_start = content.find("```json") + 7
                 json_end = content.find("```", json_start)
-                content = content[json_start:json_end].strip()
+                if json_end != -1:
+                    content = content[json_start:json_end].strip()
             elif "```" in content:
                 json_start = content.find("```") + 3
                 json_end = content.find("```", json_start)
-                content = content[json_start:json_end].strip()
+                if json_end != -1:
+                    content = content[json_start:json_end].strip()
             
             # Parse JSON response
             result_data = json.loads(content)

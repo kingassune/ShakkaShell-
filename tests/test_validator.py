@@ -132,9 +132,9 @@ def test_validate_warnings_with_low_risk(validator):
 def test_validation_summary_no_issues(validator):
     """Test validation summary with no issues."""
     result = CommandResult(
-        command="nmap -sV 10.0.0.1",
-        explanation="Scan",
-        risk_level="Medium"
+        command="echo 'test'",  # Use a command that exists everywhere
+        explanation="Echo test",
+        risk_level="Low"
     )
     
     validator.validate(result)

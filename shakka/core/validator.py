@@ -141,6 +141,8 @@ class CommandValidator:
         Args:
             result: CommandResult to check
         """
+        import shutil
+        
         # Extract the main command (first word)
         command_parts = result.command.split()
         if not command_parts:
@@ -148,18 +150,8 @@ class CommandValidator:
         
         main_command = command_parts[0]
         
-        # Try to check if the command exists (basic check)
-        try:
-            # Use 'which' on Unix-like systems
-            subprocess.run(
-                ["which", main_command],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                timeout=1
-            )
-            # If we get here, command exists
-        except (subprocess.TimeoutExpired, FileNotFoundError):
-            # Command not found or which doesn't exist
+        # Use shutil.which for cross-platform compatibility
+        if not shutil.which(main_command):
             if main_command in self.KNOWN_TOOLS:
                 self.validation_warnings.append(
                     f"Tool '{main_command}' may not be installed"
