@@ -1,0 +1,46 @@
+[tool.poetry]
+name = "shakkashell"
+version = "2.0.0"
+description = "Natural language to offensive security commands"
+authors = ["ShakkaShell Team"]
+readme = "README.md"
+packages = [{include = "shakka"}]
+
+[tool.poetry.dependencies]
+python = "^3.11"
+typer = "^0.9.0"
+rich = "^13.0"
+litellm = "^1.0"
+pydantic-settings = "^2.0"
+sqlalchemy = "^2.0"
+httpx = "^0.25"
+platformdirs = "^4.0"
+pyyaml = "^6.0"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^7.4"
+pytest-asyncio = "^0.21"
+ruff = "^0.1"
+pytest-cov = "^4.1"
+
+[tool.poetry.scripts]
+shakka = "shakka.cli:app"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP"]
+ignore = []
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
