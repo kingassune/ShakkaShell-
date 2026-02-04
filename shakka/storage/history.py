@@ -1,7 +1,7 @@
 """CRUD operations for command history."""
 
 from typing import Optional, List
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy import desc
 from sqlalchemy.orm import Session
@@ -44,7 +44,7 @@ def add_to_history(
             risk_level=result.risk_level,
             provider=provider,
             executed=executed,
-            created_at=datetime.utcnow()
+            created_at=datetime.now(timezone.utc)
         )
         
         session.add(entry)
