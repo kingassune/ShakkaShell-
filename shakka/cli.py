@@ -5,10 +5,20 @@ from typing import Optional
 
 import typer
 from rich.console import Console
+from rich.panel import Panel
 
 from shakka import __version__
 from shakka.config import ShakkaConfig
 from shakka.core.generator import CommandGenerator
+from shakka.agents import (
+    Orchestrator,
+    AgentConfig,
+    AgentRole,
+    ReconAgent,
+    ExploitAgent,
+    PersistenceAgent,
+    ReporterAgent,
+)
 from shakka.utils import display
 
 app = typer.Typer(
@@ -60,6 +70,12 @@ def generate_command(
         "-i",
         help="Enter interactive mode"
     ),
+    agent: bool = typer.Option(
+        False,
+        "--agent",
+        "-a",
+        help="Use multi-agent orchestration for complex tasks"
+    ),
 ):
     """Generate security commands from natural language.
     
@@ -67,8 +83,19 @@ def generate_command(
         shakka generate "scan ports on 10.0.0.1"
         shakka generate "find subdomains for example.com" --provider openai
         shakka generate --interactive
+        shakka generate --agent "Full recon and initial access assessment on target.com"
     """
     config = ShakkaConfig()
+    
+    # Agent mode
+    if agent:
+        if not query:
+            display.print_error("Please provide a task for agent mode")
+            raise typer.Exit(code=1)
+        
+        _run_agent_mode(query, config)
+        return
+    
     generator = CommandGenerator(config=config)
     
     if interactive:
@@ -145,7 +172,7 @@ def generate_command(
             raise typer.Exit(code=1)
 
 
-@app.command()
+@app.command(name="history")
 def history(
     limit: int = typer.Option(
         10,
@@ -178,7 +205,7 @@ def history(
     display.print_info("History feature coming soon...")
 
 
-@app.command()
+@app.command(name="config")
 def config_command(
     show: bool = typer.Option(
         False,
@@ -226,7 +253,103 @@ def config_command(
     display.print_info("Use --show to view configuration or --set-provider to change provider")
 
 
-@app.command()
+def _run_agent_mode(objective: str, config: ShakkaConfig) -> None:
+    """Run multi-agent orchestration for complex tasks.
+    
+    Args:
+        objective: The high-level task to accomplish.
+        config: ShakkaConfig instance.
+    """
+    display.print_info("Initializing multi-agent orchestration...")
+    display.console.print()
+    
+    # Create orchestrator with agent config
+    orchestrator = Orchestrator(
+        config=AgentConfig(
+            role=AgentRole.ORCHESTRATOR,
+            use_shared_memory=True,
+        )
+    )
+    
+    # Create and register specialized agents
+    agents = {
+        AgentRole.RECON: ReconAgent(),
+        AgentRole.EXPLOIT: ExploitAgent(),
+        AgentRole.PERSISTENCE: PersistenceAgent(),
+        AgentRole.REPORTER: ReporterAgent(),
+    }
+    
+    for role, agent in agents.items():
+        orchestrator.register_agent(agent)
+    
+    # Show registered agents
+    display.console.print(Panel(
+        f"[bold cyan]Objective:[/bold cyan] {objective}\n\n"
+        f"[bold]Registered Agents:[/bold]\n"
+        + "\n".join(f"  • {role.value.title()}" for role in agents.keys()),
+        title="[bold green]Agent Mode[/bold green]",
+        border_style="green",
+    ))
+    display.console.print()
+    
+    # Create and display the execution plan
+    with display.print_spinner_context("Creating execution plan..."):
+        plan = orchestrator.create_plan(objective)
+    
+    display.console.print(plan.format_plan())
+    display.console.print()
+    
+    # Execute the plan
+    display.print_info("Executing plan...")
+    display.console.print()
+    
+    try:
+        result = asyncio.run(orchestrator.execute(objective))
+        
+        # Display results
+        if result.success:
+            display.print_success("Task completed successfully!")
+        else:
+            display.print_warning("Task completed with some issues.")
+        
+        display.console.print()
+        
+        # Show step results
+        if result.data and "step_results" in result.data:
+            display.console.print("[bold]Step Results:[/bold]")
+            for i, step_result in enumerate(result.data["step_results"], 1):
+                status = "✅" if step_result.get("success") else "❌"
+                output = step_result.get("output", "No output")[:100]
+                display.console.print(f"  {status} Step {i}: {output}")
+        
+        display.console.print()
+        
+        # Show final output
+        if result.output:
+            display.console.print(Panel(
+                result.output,
+                title="[bold]Agent Output[/bold]",
+                border_style="blue",
+            ))
+        
+        # Show plan status
+        final_plan = result.data.get("plan", {}) if result.data else {}
+        if final_plan:
+            progress = final_plan.get("progress", 0)
+            status = final_plan.get("status", "unknown")
+            display.console.print(
+                f"\n[dim]Plan Status: {status} ({progress:.0f}% complete)[/dim]"
+            )
+        
+    except KeyboardInterrupt:
+        display.print_warning("\nAgent execution interrupted by user.")
+        raise typer.Exit(code=130)
+    except Exception as e:
+        display.print_error(f"Agent execution failed: {e}")
+        raise typer.Exit(code=1)
+
+
+@app.command(name="validate")
 def validate(
     provider: Optional[str] = typer.Option(
         None,
@@ -263,6 +386,28 @@ def validate(
                     display.print_error(f"{prov}: Failed to connect")
             except Exception as e:
                 display.print_error(f"{prov}: {str(e)}")
+
+
+@app.command(name="agent")
+def agent(
+    objective: str = typer.Argument(
+        ...,
+        help="The complex task to accomplish using multi-agent orchestration"
+    ),
+):
+    """Run multi-agent orchestration for complex security tasks.
+    
+    This command uses multiple specialized agents (Recon, Exploit, 
+    Persistence, Reporter) coordinated by an orchestrator to complete
+    complex, multi-step security assessments.
+    
+    Examples:
+        shakka agent "Full recon and initial access assessment on target.com"
+        shakka agent "Scan network 192.168.1.0/24 and identify vulnerabilities"
+        shakka agent "Perform comprehensive security audit and generate report"
+    """
+    config = ShakkaConfig()
+    _run_agent_mode(objective, config)
 
 
 if __name__ == "__main__":
