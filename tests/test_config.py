@@ -97,3 +97,14 @@ def test_load_nonexistent_config():
         # Should return default values
         assert config.default_provider == "openai"
         assert config.debug is False
+
+
+def test_config_standard_env_keys(monkeypatch):
+    """Test loading API keys from standard env vars without SHAKKA_ prefix."""
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-openai-env")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-anthropic-env")
+
+    config = ShakkaConfig()
+
+    assert config.openai_api_key == "sk-openai-env"
+    assert config.anthropic_api_key == "sk-anthropic-env"

@@ -9,7 +9,7 @@ Config file locations:
 from pathlib import Path
 from typing import Literal, Optional
 
-from pydantic import Field
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from platformdirs import user_config_dir
 
@@ -39,12 +39,18 @@ class ShakkaConfig(BaseSettings):
     
     openai_api_key: Optional[str] = Field(
         default=None,
-        description="OpenAI API key"
+        description="OpenAI API key",
+        validation_alias=AliasChoices(
+            "openai_api_key", "SHAKKA_OPENAI_API_KEY", "OPENAI_API_KEY"
+        ),
     )
     
     anthropic_api_key: Optional[str] = Field(
         default=None,
-        description="Anthropic API key"
+        description="Anthropic API key",
+        validation_alias=AliasChoices(
+            "anthropic_api_key", "SHAKKA_ANTHROPIC_API_KEY", "ANTHROPIC_API_KEY"
+        ),
     )
     
     ollama_base_url: str = Field(
