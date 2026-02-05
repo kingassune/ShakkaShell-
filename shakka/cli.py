@@ -84,8 +84,7 @@ def generate_command(
                     break
 
                 raw_parts = user_input.split(maxsplit=1)
-                lower_parts = user_input.lower().split(maxsplit=1)
-                command_word = lower_parts[0] if lower_parts else ""
+                command_word = raw_parts[0].lower() if raw_parts else ""
 
                 if command_word in (":provider", "/provider"):
                     if len(raw_parts) < 2 or not raw_parts[1].strip():

@@ -184,10 +184,10 @@ class CommandGenerator:
 
     def _is_provider_configured(self, provider_name: str) -> bool:
         """Check configuration for a specific provider."""
-        if provider_name == "openai":
-            return bool(self.config.openai_api_key)
-        elif provider_name == "anthropic":
-            return bool(self.config.anthropic_api_key)
-        elif provider_name == "ollama":
-            return True
-        return False
+        checks: dict[str, callable] = {
+            "openai": lambda: bool(self.config.openai_api_key),
+            "anthropic": lambda: bool(self.config.anthropic_api_key),
+            "ollama": lambda: True,
+        }
+        validator = checks.get(provider_name)
+        return validator() if validator else False
