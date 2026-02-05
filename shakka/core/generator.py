@@ -144,7 +144,7 @@ class CommandGenerator:
         """
         if not self._is_provider_supported(provider_name):
             raise ValueError(
-                f"Unknown provider: {provider_name}. "
+                f"Unsupported provider: {provider_name}. "
                 f"Valid options: {', '.join(self.list_providers())}"
             )
 
