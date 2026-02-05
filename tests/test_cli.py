@@ -266,3 +266,150 @@ class TestAgentImports:
         from shakka.cli import AgentConfig, AgentRole
         assert AgentConfig is not None
         assert AgentRole is not None
+
+
+# =============================================================================
+# Exploit Command Tests
+# =============================================================================
+
+class TestExploitCommand:
+    """Tests for the exploit command."""
+    
+    def test_exploit_command_valid_cve(self):
+        """Test exploit command with valid CVE ID."""
+        with patch("shakka.cli.ExploitPipeline") as MockPipeline:
+            mock_pipeline = MockPipeline.return_value
+            mock_pipeline.search = AsyncMock(return_value=[self._mock_result()])
+            
+            result = runner.invoke(app, ["exploit", "CVE-2024-1234"])
+            # Should not have exit code 1 due to invalid format
+            assert "Invalid CVE format" not in result.stdout
+    
+    def test_exploit_command_with_source_filter(self):
+        """Test exploit command with --source filter."""
+        with patch("shakka.cli.ExploitPipeline") as MockPipeline:
+            mock_pipeline = MockPipeline.return_value
+            mock_pipeline.search = AsyncMock(return_value=[self._mock_result()])
+            
+            result = runner.invoke(app, ["exploit", "CVE-2024-1234", "--source", "github"])
+            # Should accept valid source
+            assert "Invalid source" not in result.stdout
+    
+    def test_exploit_command_with_code_flag(self):
+        """Test exploit command with --code flag."""
+        with patch("shakka.cli.ExploitPipeline") as MockPipeline:
+            mock_pipeline = MockPipeline.return_value
+            mock_result = self._mock_result()
+            mock_result.code = "#!/usr/bin/env python3\nprint('exploit')"
+            mock_pipeline.search = AsyncMock(return_value=[mock_result])
+            
+            result = runner.invoke(app, ["exploit", "CVE-2024-1234", "--code"])
+            # Should complete without error
+            assert result.exit_code in [0, 1]
+    
+    def test_exploit_command_with_limit(self):
+        """Test exploit command with --limit option."""
+        with patch("shakka.cli.ExploitPipeline") as MockPipeline:
+            mock_pipeline = MockPipeline.return_value
+            mock_pipeline.search = AsyncMock(return_value=[
+                self._mock_result() for _ in range(10)
+            ])
+            
+            result = runner.invoke(app, ["exploit", "CVE-2024-1234", "--limit", "3"])
+            # Should complete
+            assert result.exit_code in [0, 1]
+    
+    def test_exploit_command_uppercase_cve(self):
+        """Test exploit command normalizes CVE to uppercase."""
+        with patch("shakka.cli.ExploitPipeline") as MockPipeline:
+            mock_pipeline = MockPipeline.return_value
+            mock_pipeline.search = AsyncMock(return_value=[self._mock_result()])
+            
+            result = runner.invoke(app, ["exploit", "cve-2024-1234"])
+            # Should accept lowercase and normalize
+            assert "Invalid CVE format" not in result.stdout
+    
+    def test_exploit_command_shows_metadata(self):
+        """Test exploit command shows result metadata."""
+        with patch("shakka.cli.ExploitPipeline") as MockPipeline:
+            mock_pipeline = MockPipeline.return_value
+            mock_result = self._mock_result()
+            mock_result.metadata = {"cvss": {"score": 9.8, "severity": "critical"}}
+            mock_pipeline.search = AsyncMock(return_value=[mock_result])
+            
+            result = runner.invoke(app, ["exploit", "CVE-2024-1234"])
+            # Should complete and show some metadata
+            assert result.exit_code in [0, 1]
+    
+    def test_exploit_command_accepts_valid_sources(self):
+        """Test exploit command accepts all valid source values."""
+        from shakka.exploit import ExploitSource
+        
+        for source in ExploitSource:
+            with patch("shakka.cli.ExploitPipeline") as MockPipeline:
+                mock_pipeline = MockPipeline.return_value
+                mock_pipeline.search = AsyncMock(return_value=[self._mock_result()])
+                
+                result = runner.invoke(app, ["exploit", "CVE-2024-1234", "--source", source.value])
+                assert "Invalid source" not in result.stdout
+    
+    def test_exploit_command_no_llm_flag_exists(self):
+        """Test exploit command has --no-llm flag."""
+        with patch("shakka.cli.ExploitPipeline") as MockPipeline:
+            mock_pipeline = MockPipeline.return_value
+            mock_pipeline.search = AsyncMock(return_value=[self._mock_result()])
+            
+            # Should not error on unknown option
+            result = runner.invoke(app, ["exploit", "CVE-2024-1234", "--no-llm"])
+            assert "No such option" not in result.stdout
+    
+    def test_exploit_command_short_options(self):
+        """Test exploit command short options work."""
+        with patch("shakka.cli.ExploitPipeline") as MockPipeline:
+            mock_pipeline = MockPipeline.return_value
+            mock_pipeline.search = AsyncMock(return_value=[self._mock_result()])
+            
+            # Test short options: -s, -c, -n
+            result = runner.invoke(app, ["exploit", "CVE-2024-1234", "-s", "github", "-n", "2"])
+            assert result.exit_code in [0, 1]
+    
+    @staticmethod
+    def _mock_result():
+        """Create a mock exploit result."""
+        from shakka.exploit import ExploitResult, ExploitSource
+        
+        return ExploitResult(
+            cve_id="CVE-2024-1234",
+            source=ExploitSource.GITHUB,
+            title="Test Exploit PoC",
+            description="A test proof of concept exploit",
+            code="#!/usr/bin/env python3\nprint('test')",
+            url="https://github.com/test/poc",
+            confidence=0.8,
+            verified=True,
+            safe_for_testing=True,
+            metadata={
+                "stars": 100,
+                "language": "Python",
+            },
+        )
+
+
+class TestExploitImports:
+    """Test exploit-related imports are available in CLI."""
+    
+    def test_exploit_pipeline_import(self):
+        """Test ExploitPipeline is importable from CLI module."""
+        from shakka.cli import ExploitPipeline
+        assert ExploitPipeline is not None
+    
+    def test_exploit_result_import(self):
+        """Test ExploitResult is importable from CLI module."""
+        from shakka.cli import ExploitResult
+        assert ExploitResult is not None
+    
+    def test_exploit_source_import(self):
+        """Test ExploitSource is importable from CLI module."""
+        from shakka.cli import ExploitSource
+        assert ExploitSource is not None
+

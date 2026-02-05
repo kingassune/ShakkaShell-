@@ -6,6 +6,8 @@ from typing import Optional
 import typer
 from rich.console import Console
 from rich.panel import Panel
+from rich.table import Table
+from rich.syntax import Syntax
 
 from shakka import __version__
 from shakka.config import ShakkaConfig
@@ -18,6 +20,11 @@ from shakka.agents import (
     ExploitAgent,
     PersistenceAgent,
     ReporterAgent,
+)
+from shakka.exploit import (
+    ExploitPipeline,
+    ExploitResult,
+    ExploitSource,
 )
 from shakka.utils import display
 
@@ -408,6 +415,189 @@ def agent(
     """
     config = ShakkaConfig()
     _run_agent_mode(objective, config)
+
+
+@app.command(name="exploit")
+def exploit_command(
+    cve_id: str = typer.Argument(
+        ...,
+        help="CVE identifier to search for exploits (e.g., CVE-2024-1234)"
+    ),
+    source: Optional[str] = typer.Option(
+        None,
+        "--source",
+        "-s",
+        help="Specific source to search (nvd, exploit_db, github, llm)"
+    ),
+    show_code: bool = typer.Option(
+        False,
+        "--code",
+        "-c",
+        help="Show exploit code if available"
+    ),
+    limit: int = typer.Option(
+        5,
+        "--limit",
+        "-n",
+        help="Maximum number of results to display"
+    ),
+    no_llm: bool = typer.Option(
+        False,
+        "--no-llm",
+        help="Disable LLM-based exploit synthesis"
+    ),
+):
+    """Search for exploits by CVE identifier.
+    
+    Searches NVD, Exploit-DB, GitHub, and optionally synthesizes
+    exploits using LLM based on vulnerability details.
+    
+    Examples:
+        shakka exploit CVE-2024-1234
+        shakka exploit CVE-2023-44487 --source exploit_db
+        shakka exploit CVE-2021-44228 --code --limit 3
+        shakka exploit CVE-2020-1472 --no-llm
+    """
+    # Validate CVE format
+    import re
+    cve_pattern = r"^CVE-\d{4}-\d{4,}$"
+    cve_id = cve_id.upper().strip()
+    
+    if not re.match(cve_pattern, cve_id):
+        display.print_error(f"Invalid CVE format: {cve_id}")
+        display.print_info("Expected format: CVE-YYYY-NNNN (e.g., CVE-2024-1234)")
+        raise typer.Exit(code=1)
+    
+    # Parse source filter
+    sources = None
+    if source:
+        try:
+            sources = [ExploitSource(source.lower())]
+        except ValueError:
+            valid_sources = ", ".join(s.value for s in ExploitSource)
+            display.print_error(f"Invalid source: {source}")
+            display.print_info(f"Valid sources: {valid_sources}")
+            raise typer.Exit(code=1)
+    
+    # Create pipeline
+    config = ShakkaConfig()
+    pipeline = ExploitPipeline(
+        nvd_api_key=getattr(config, 'nvd_api_key', None),
+        github_token=getattr(config, 'github_token', None),
+        enable_llm_synthesis=not no_llm,
+        safety_check=True,
+    )
+    
+    display.console.print(Panel(
+        f"[bold cyan]Searching for exploits:[/bold cyan] {cve_id}",
+        title="[bold green]CVE Exploit Search[/bold green]",
+        border_style="green",
+    ))
+    display.console.print()
+    
+    # Search for exploits
+    try:
+        with display.print_spinner_context(f"Searching for {cve_id}..."):
+            results = asyncio.run(pipeline.search(cve_id, sources=sources))
+    except Exception as e:
+        display.print_error(f"Search failed: {e}")
+        raise typer.Exit(code=1)
+    
+    if not results:
+        display.print_warning(f"No exploits found for {cve_id}")
+        display.print_info("Try searching with different sources or check if the CVE exists")
+        raise typer.Exit(code=0)
+    
+    # Display results
+    display.print_success(f"Found {len(results)} result(s) for {cve_id}")
+    display.console.print()
+    
+    # Create results table
+    table = Table(title=f"Exploits for {cve_id}", show_header=True, header_style="bold cyan")
+    table.add_column("#", style="dim", width=3)
+    table.add_column("Source", width=12)
+    table.add_column("Title", min_width=30)
+    table.add_column("Confidence", justify="center", width=12)
+    table.add_column("Status", width=15)
+    
+    for i, result in enumerate(results[:limit], 1):
+        # Format confidence as percentage
+        confidence = f"{result.confidence:.0%}"
+        
+        # Format status
+        verified = "✅ Verified" if result.verified else "⚠️ Unverified"
+        safe = " 🔒" if result.safe_for_testing else ""
+        status = f"{verified}{safe}"
+        
+        # Source badge
+        source_badge = result.source.value.upper()
+        
+        table.add_row(
+            str(i),
+            source_badge,
+            result.title[:40] + "..." if len(result.title) > 40 else result.title,
+            confidence,
+            status,
+        )
+    
+    display.console.print(table)
+    display.console.print()
+    
+    # Display detailed results
+    for i, result in enumerate(results[:limit], 1):
+        display.console.print(f"[bold]#{i} - {result.title}[/bold]")
+        display.console.print(f"  [dim]Source:[/dim] {result.source.value}")
+        display.console.print(f"  [dim]CVE:[/dim] {result.cve_id}")
+        
+        if result.url:
+            display.console.print(f"  [dim]URL:[/dim] [link={result.url}]{result.url}[/link]")
+        
+        if result.description:
+            desc = result.description[:150] + "..." if len(result.description) > 150 else result.description
+            display.console.print(f"  [dim]Description:[/dim] {desc}")
+        
+        # Show code if requested and available
+        if show_code and result.code:
+            display.console.print()
+            display.console.print(f"  [bold]Exploit Code:[/bold]")
+            
+            # Determine language for syntax highlighting
+            lang = "python"
+            if result.code.startswith("#!/bin/bash") or result.code.startswith("#!/usr/bin/env bash"):
+                lang = "bash"
+            elif "<script" in result.code.lower() or "<!doctype" in result.code.lower():
+                lang = "html"
+            elif "import java" in result.code or "public class" in result.code:
+                lang = "java"
+            elif "#include" in result.code:
+                lang = "c"
+            
+            syntax = Syntax(
+                result.code[:2000] + "\n..." if len(result.code) > 2000 else result.code,
+                lang,
+                theme="monokai",
+                line_numbers=True,
+            )
+            display.console.print(Panel(syntax, title="Code", border_style="blue"))
+        
+        # Show metadata
+        if result.metadata:
+            meta_items = []
+            if "cvss" in result.metadata and result.metadata["cvss"]:
+                cvss = result.metadata["cvss"]
+                meta_items.append(f"CVSS: {cvss.get('score', 'N/A')} ({cvss.get('severity', 'N/A')})")
+            if "stars" in result.metadata:
+                meta_items.append(f"⭐ {result.metadata['stars']}")
+            if "edb_id" in result.metadata:
+                meta_items.append(f"EDB-{result.metadata['edb_id']}")
+            if meta_items:
+                display.console.print(f"  [dim]Info:[/dim] {' | '.join(meta_items)}")
+        
+        display.console.print()
+    
+    # Summary
+    if len(results) > limit:
+        display.print_info(f"Showing {limit} of {len(results)} results. Use --limit to see more.")
 
 
 if __name__ == "__main__":
