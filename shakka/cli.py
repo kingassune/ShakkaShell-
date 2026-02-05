@@ -82,9 +82,11 @@ def generate_command(
                 if user_input.lower() in ["exit", "quit", "q"]:
                     display.print_info("Goodbye!")
                     break
+                if not user_input:
+                    continue
 
                 input_parts = user_input.split(maxsplit=1)
-                command_word = input_parts[0].lower() if input_parts else ""
+                command_word = input_parts[0].lower()
 
                 if command_word in (":provider", "/provider"):
                     if len(input_parts) < 2 or not input_parts[1].strip():
@@ -98,10 +100,7 @@ def generate_command(
                     except ValueError as e:
                         display.print_error(str(e))
                     continue
-                
-                if not user_input:
-                    continue
-                
+
                 # Generate command
                 with display.print_spinner_context("Generating command..."):
                     result = asyncio.run(

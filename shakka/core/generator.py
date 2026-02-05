@@ -25,7 +25,7 @@ class CommandGenerator:
         """
         self.config = config or ShakkaConfig()
         self._provider: Optional[LLMProvider] = None
-        self._cached_provider_name: Optional[str] = None
+        self._current_provider_name: Optional[str] = None
     
     def _get_provider(self, provider_name: Optional[str] = None) -> LLMProvider:
         """Get or create LLM provider instance.
@@ -42,7 +42,7 @@ class CommandGenerator:
         """
         provider_name = provider_name or self.config.default_provider
 
-        if self._provider and self._cached_provider_name == provider_name:
+        if self._provider and self._current_provider_name == provider_name:
             return self._provider
         
         if provider_name == "openai":
@@ -82,7 +82,7 @@ class CommandGenerator:
             )
 
         self._provider = provider
-        self._cached_provider_name = provider_name
+        self._current_provider_name = provider_name
         return provider
     
     async def generate(
@@ -157,7 +157,7 @@ class CommandGenerator:
         self.config.default_provider = provider_name
         # Clear cached provider so it will be recreated on next use
         self._provider = None
-        self._cached_provider_name = None
+        self._current_provider_name = None
     
     def list_providers(self) -> list[str]:
         """List available LLM providers.
