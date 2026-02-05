@@ -103,20 +103,55 @@ class CommandGenerator:
             
         Raises:
             ValueError: If prompt is empty or provider is invalid
-            RuntimeError: If generation fails
+            RuntimeError: If generation fails on all providers
         """
         if not prompt or not prompt.strip():
             raise ValueError("Prompt cannot be empty")
         
-        # Get provider instance
-        llm_provider = self._get_provider(provider)
+        # Build ordered list of providers to try
+        providers_to_try = self._get_providers_to_try(provider)
         
-        # Generate command
-        try:
-            result = await llm_provider.generate(prompt, context)
-            return result
-        except Exception as e:
-            raise RuntimeError(f"Command generation failed: {e}")
+        errors = []
+        for provider_name in providers_to_try:
+            try:
+                llm_provider = self._get_provider(provider_name)
+                result = await llm_provider.generate(prompt, context)
+                return result
+            except ValueError:
+                # Configuration errors (missing API key) - skip to next provider
+                errors.append(f"{provider_name}: not configured")
+                continue
+            except Exception as e:
+                # Runtime errors (API failures, timeouts) - skip to next provider
+                errors.append(f"{provider_name}: {e}")
+                if not self.config.enable_fallback:
+                    break
+                continue
+        
+        # All providers failed
+        error_details = "; ".join(errors)
+        raise RuntimeError(f"Command generation failed on all providers: {error_details}")
+
+    def _get_providers_to_try(self, requested_provider: Optional[str] = None) -> list[str]:
+        """Get ordered list of providers to attempt.
+        
+        Args:
+            requested_provider: Explicitly requested provider, if any.
+            
+        Returns:
+            List of provider names to try in order.
+        """
+        primary = requested_provider or self.config.default_provider
+        providers = [primary]
+        
+        if self.config.enable_fallback:
+            # Add fallback providers that are different from primary and configured
+            for fallback in self.config.fallback_providers:
+                if fallback != primary and fallback not in providers:
+                    if self._is_provider_configured(fallback):
+                        providers.append(fallback)
+        
+        return providers
     
     async def validate_provider(self, provider: Optional[str] = None) -> bool:
         """Validate that the specified provider is configured and working.

@@ -108,3 +108,29 @@ def test_config_standard_env_keys(monkeypatch):
 
     assert config.openai_api_key == "sk-openai-env"
     assert config.anthropic_api_key == "sk-anthropic-env"
+
+
+def test_config_fallback_defaults():
+    """Test default fallback configuration values."""
+    config = ShakkaConfig()
+    
+    assert config.enable_fallback is True
+    assert isinstance(config.fallback_providers, list)
+    assert "anthropic" in config.fallback_providers
+    assert "ollama" in config.fallback_providers
+
+
+def test_config_fallback_from_env(monkeypatch):
+    """Test fallback settings can be configured via env vars."""
+    monkeypatch.setenv("SHAKKA_ENABLE_FALLBACK", "false")
+    
+    config = ShakkaConfig()
+    
+    assert config.enable_fallback is False
+
+
+def test_config_fallback_custom_providers():
+    """Test custom fallback provider list."""
+    config = ShakkaConfig(fallback_providers=["ollama"])
+    
+    assert config.fallback_providers == ["ollama"]

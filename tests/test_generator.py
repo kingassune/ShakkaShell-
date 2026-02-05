@@ -245,3 +245,120 @@ def test_set_provider_requires_configuration():
 
     with pytest.raises(ValueError, match="not configured"):
         generator.set_provider("anthropic")
+
+
+# Fallback Provider Tests
+
+
+def test_get_providers_to_try_returns_primary_only_when_fallback_disabled(mock_config):
+    """When fallback is disabled, only primary provider is returned."""
+    mock_config.enable_fallback = False
+    generator = CommandGenerator(config=mock_config)
+    
+    providers = generator._get_providers_to_try()
+    
+    assert providers == ["openai"]
+
+
+def test_get_providers_to_try_includes_fallback_providers(mock_config):
+    """When fallback enabled, returns primary and configured fallbacks."""
+    mock_config.enable_fallback = True
+    mock_config.fallback_providers = ["anthropic", "ollama"]
+    generator = CommandGenerator(config=mock_config)
+    
+    providers = generator._get_providers_to_try()
+    
+    assert providers == ["openai", "anthropic", "ollama"]
+
+
+def test_get_providers_to_try_skips_unconfigured_fallbacks():
+    """Fallback providers without configuration are skipped."""
+    config = ShakkaConfig(
+        openai_api_key="sk-test",
+        default_provider="openai",
+        enable_fallback=True,
+        fallback_providers=["anthropic", "ollama"]  # anthropic not configured
+    )
+    generator = CommandGenerator(config=config)
+    
+    providers = generator._get_providers_to_try()
+    
+    # anthropic not configured (no API key), ollama always configured
+    assert providers == ["openai", "ollama"]
+
+
+def test_get_providers_to_try_respects_requested_provider(mock_config):
+    """Requested provider takes precedence over default."""
+    mock_config.enable_fallback = True
+    mock_config.fallback_providers = ["openai", "ollama"]
+    generator = CommandGenerator(config=mock_config)
+    
+    providers = generator._get_providers_to_try("anthropic")
+    
+    assert providers[0] == "anthropic"
+    assert "openai" in providers
+    assert "ollama" in providers
+
+
+@pytest.mark.asyncio
+async def test_generate_falls_back_on_provider_failure(mock_config, mock_command_result):
+    """When primary provider fails, generator falls back to next provider."""
+    mock_config.enable_fallback = True
+    mock_config.fallback_providers = ["anthropic", "ollama"]
+    generator = CommandGenerator(config=mock_config)
+    
+    with patch("shakka.providers.openai.OpenAIProvider") as MockOpenAI, \
+         patch("shakka.providers.anthropic.AnthropicProvider") as MockAnthropic:
+        
+        # Primary provider fails
+        failing_provider = AsyncMock()
+        failing_provider.generate.side_effect = RuntimeError("API unavailable")
+        MockOpenAI.return_value = failing_provider
+        
+        # Fallback provider succeeds
+        working_provider = AsyncMock()
+        working_provider.generate.return_value = mock_command_result
+        MockAnthropic.return_value = working_provider
+        
+        result = await generator.generate("scan ports")
+        
+        assert isinstance(result, CommandResult)
+        assert result.command == mock_command_result.command
+        working_provider.generate.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_generate_no_fallback_when_disabled(mock_config):
+    """When fallback is disabled, failure raises immediately."""
+    mock_config.enable_fallback = False
+    generator = CommandGenerator(config=mock_config)
+    
+    with patch("shakka.providers.openai.OpenAIProvider") as MockOpenAI:
+        failing_provider = AsyncMock()
+        failing_provider.generate.side_effect = RuntimeError("API unavailable")
+        MockOpenAI.return_value = failing_provider
+        
+        with pytest.raises(RuntimeError, match="Command generation failed on all providers"):
+            await generator.generate("scan ports")
+
+
+@pytest.mark.asyncio
+async def test_generate_all_providers_fail(mock_config):
+    """When all providers fail, error includes all failures."""
+    mock_config.enable_fallback = True
+    mock_config.fallback_providers = ["anthropic"]
+    generator = CommandGenerator(config=mock_config)
+    
+    with patch("shakka.providers.openai.OpenAIProvider") as MockOpenAI, \
+         patch("shakka.providers.anthropic.AnthropicProvider") as MockAnthropic:
+        
+        openai_provider = AsyncMock()
+        openai_provider.generate.side_effect = RuntimeError("OpenAI down")
+        MockOpenAI.return_value = openai_provider
+        
+        anthropic_provider = AsyncMock()
+        anthropic_provider.generate.side_effect = RuntimeError("Anthropic down")
+        MockAnthropic.return_value = anthropic_provider
+        
+        with pytest.raises(RuntimeError, match="OpenAI down.*Anthropic down"):
+            await generator.generate("scan ports")

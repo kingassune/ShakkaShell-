@@ -63,6 +63,17 @@ class ShakkaConfig(BaseSettings):
         description="Ollama model name to use"
     )
     
+    # Fallback Configuration
+    fallback_providers: list[str] = Field(
+        default_factory=lambda: ["anthropic", "ollama"],
+        description="Ordered list of fallback providers when primary fails"
+    )
+    
+    enable_fallback: bool = Field(
+        default=True,
+        description="Enable automatic fallback to alternative providers"
+    )
+    
     # Application Settings
     config_path: Optional[Path] = Field(
         default=None,
