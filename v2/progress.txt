@@ -1,3 +1,4 @@
 ShakkaShell v2 Progress
 - [x] Provider switching works without restart (interactive :provider command and generator switching implemented; tests added)
 - [x] API keys from environment or config file (standard OPENAI_API_KEY/ANTHROPIC_API_KEY aliases supported and tested)
+- [x] Graceful fallback if provider unavailable (fallback_providers and enable_fallback config options; generator tries alternative providers on failure; 10 new tests added)
