@@ -17,6 +17,8 @@ app = typer.Typer(
     add_completion=False,
 )
 
+PROVIDER_COMMAND_ALIASES = (":provider", "/provider")
+
 
 def version_callback(value: bool):
     """Print version and exit."""
@@ -88,12 +90,15 @@ def generate_command(
                 input_parts = user_input.split(maxsplit=1)
                 command_word = input_parts[0].lower()
 
-                if command_word in (":provider", "/provider"):
-                    if len(input_parts) < 2 or not input_parts[1].strip():
+                if command_word in PROVIDER_COMMAND_ALIASES:
+                    if len(input_parts) < 2:
                         display.print_error("Usage: :provider <openai|anthropic|ollama>")
                         continue
 
                     new_provider = input_parts[1].strip()
+                    if not new_provider:
+                        display.print_error("Usage: :provider <openai|anthropic|ollama>")
+                        continue
                     try:
                         generator.set_provider(new_provider)
                         display.print_success(f"Switched provider to: {new_provider}")
