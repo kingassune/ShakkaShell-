@@ -165,7 +165,7 @@ class CommandGenerator:
         Returns:
             List of provider names
         """
-        return ["openai", "anthropic", "ollama"]
+        return list(self._get_provider_validators().keys())
     
     def get_provider_status(self) -> dict[str, bool]:
         """Get configuration status for all providers.
@@ -184,10 +184,14 @@ class CommandGenerator:
 
     def _is_provider_configured(self, provider_name: str) -> bool:
         """Check configuration for a specific provider."""
-        checks: dict[str, Callable[[], bool]] = {
+        validators = self._get_provider_validators()
+        validator = validators.get(provider_name)
+        return validator() if validator else False
+
+    def _get_provider_validators(self) -> dict[str, Callable[[], bool]]:
+        """Return configuration validators for each supported provider."""
+        return {
             "openai": lambda: bool(self.config.openai_api_key),
             "anthropic": lambda: bool(self.config.anthropic_api_key),
             "ollama": lambda: True,
         }
-        validator = checks.get(provider_name)
-        return validator() if validator else False
