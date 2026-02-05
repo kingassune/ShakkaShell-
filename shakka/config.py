@@ -80,6 +80,32 @@ class ShakkaConfig(BaseSettings):
         description="Enable tracking of token usage and costs per provider"
     )
     
+    # Safety Configuration
+    safety_confirm_dangerous: bool = Field(
+        default=True,
+        description="Require confirmation before executing dangerous commands"
+    )
+    
+    safety_block_destructive: bool = Field(
+        default=False,
+        description="Block destructive commands instead of just warning"
+    )
+    
+    safety_blocked_commands: list[str] = Field(
+        default_factory=lambda: ["rm -rf /", ":(){ :|:& };:"],
+        description="List of commands that are always blocked"
+    )
+    
+    safety_yolo_mode: bool = Field(
+        default=False,
+        description="Skip all safety confirmations (use with caution!)"
+    )
+    
+    safety_enable_audit: bool = Field(
+        default=True,
+        description="Enable audit logging of all command safety checks"
+    )
+    
     # Application Settings
     config_path: Optional[Path] = Field(
         default=None,
