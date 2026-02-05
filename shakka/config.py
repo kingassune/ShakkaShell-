@@ -132,6 +132,37 @@ class ShakkaConfig(BaseSettings):
         description="Embedding provider for semantic memory (openai, ollama, none)"
     )
     
+    # Agent Configuration
+    agent_enabled: bool = Field(
+        default=True,
+        description="Enable multi-agent orchestration mode"
+    )
+    
+    agent_verbose: bool = Field(
+        default=False,
+        description="Show detailed agent execution logs"
+    )
+    
+    agent_max_retries: int = Field(
+        default=3,
+        description="Maximum retry attempts for failed agent tasks"
+    )
+    
+    agent_timeout: int = Field(
+        default=300,
+        description="Timeout in seconds for agent task execution"
+    )
+    
+    agent_orchestrator_model: str = Field(
+        default="gpt-4o",
+        description="Model to use for the orchestrator agent"
+    )
+    
+    agent_default_model: str = Field(
+        default="gpt-4o",
+        description="Default model for specialized agents"
+    )
+    
     # Application Settings
     config_path: Optional[Path] = Field(
         default=None,
