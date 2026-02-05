@@ -77,12 +77,12 @@ def generate_command(
         while True:
             try:
                 user_query = display.prompt("[bold cyan]ShakkaShell>[/bold cyan]")
+                command_text = user_query.strip()
                 
-                if user_query.lower() in ["exit", "quit", "q"]:
+                if command_text.lower() in ["exit", "quit", "q"]:
                     display.print_info("Goodbye!")
                     break
 
-                command_text = user_query.strip()
                 if command_text.lower().startswith((":provider", "/provider")):
                     parts = command_text.split(maxsplit=1)
                     if len(parts) < 2 or not parts[1].strip():
@@ -97,7 +97,7 @@ def generate_command(
                         display.print_error(str(e))
                     continue
                 
-                if not user_query.strip():
+                if not command_text:
                     continue
                 
                 # Generate command

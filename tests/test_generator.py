@@ -218,6 +218,26 @@ def test_set_provider_switches_and_clears_cache(mock_config):
     assert generator._provider_name is None
 
 
+def test_set_provider_switches_instance(mock_config):
+    """Switching provider recreates correct provider on next use."""
+    generator = CommandGenerator(config=mock_config)
+
+    with patch("shakka.core.generator.OpenAIProvider") as MockOpenAI, patch(
+        "shakka.providers.anthropic.AnthropicProvider"
+    ) as MockAnthropic:
+        openai_provider = MagicMock()
+        anthropic_provider = MagicMock()
+        MockOpenAI.return_value = openai_provider
+        MockAnthropic.return_value = anthropic_provider
+
+        first = generator._get_provider()
+        generator.set_provider("anthropic")
+        second = generator._get_provider()
+
+        assert first is openai_provider
+        assert second is anthropic_provider
+
+
 def test_set_provider_requires_configuration():
     """Prevent switching to providers without credentials configured."""
     config = ShakkaConfig(openai_api_key="sk-test", default_provider="openai")
