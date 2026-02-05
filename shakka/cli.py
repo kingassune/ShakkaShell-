@@ -83,15 +83,16 @@ def generate_command(
                     display.print_info("Goodbye!")
                     break
 
-                parts = user_input.split(maxsplit=1)
-                command_word = parts[0].lower() if parts else ""
+                raw_parts = user_input.split(maxsplit=1)
+                lower_parts = user_input.lower().split(maxsplit=1)
+                command_word = lower_parts[0] if lower_parts else ""
 
                 if command_word in (":provider", "/provider"):
-                    if len(parts) < 2 or not parts[1].strip():
+                    if len(raw_parts) < 2 or not raw_parts[1].strip():
                         display.print_error("Usage: :provider <openai|anthropic|ollama>")
                         continue
 
-                    new_provider = parts[1].strip()
+                    new_provider = raw_parts[1].strip()
                     try:
                         generator.set_provider(new_provider)
                         display.print_success(f"Switched provider to: {new_provider}")
