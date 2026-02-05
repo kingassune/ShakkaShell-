@@ -26,6 +26,7 @@ class CommandGenerator:
         """
         self.config = config or ShakkaConfig()
         self._provider: Optional[LLMProvider] = None
+        self._provider_name: Optional[str] = None
     
     def _get_provider(self, provider_name: Optional[str] = None) -> LLMProvider:
         """Get or create LLM provider instance.
@@ -41,6 +42,9 @@ class CommandGenerator:
             ValueError: If provider name is invalid or API key is missing
         """
         provider_name = provider_name or self.config.default_provider
+
+        if self._provider and self._provider_name == provider_name:
+            return self._provider
         
         if provider_name == "openai":
             api_key = self.config.openai_api_key
@@ -49,7 +53,7 @@ class CommandGenerator:
                     "OpenAI API key not found. "
                     "Set OPENAI_API_KEY environment variable or configure in settings."
                 )
-            return OpenAIProvider(api_key=api_key)
+            provider = OpenAIProvider(api_key=api_key)
         
         elif provider_name == "anthropic":
             api_key = self.config.anthropic_api_key
@@ -60,12 +64,12 @@ class CommandGenerator:
                 )
             # Import here to avoid dependency if not used
             from shakka.providers.anthropic import AnthropicProvider
-            return AnthropicProvider(api_key=api_key)
+            provider = AnthropicProvider(api_key=api_key)
         
         elif provider_name == "ollama":
             # Import here to avoid dependency if not used
             from shakka.providers.ollama import OllamaProvider
-            return OllamaProvider(
+            provider = OllamaProvider(
                 base_url=self.config.ollama_base_url,
                 model=self.config.ollama_model
             )
@@ -75,6 +79,10 @@ class CommandGenerator:
                 f"Unknown provider: {provider_name}. "
                 f"Valid options: openai, anthropic, ollama"
             )
+
+        self._provider = provider
+        self._provider_name = provider_name
+        return provider
     
     async def generate(
         self,
@@ -123,6 +131,26 @@ class CommandGenerator:
             return await llm_provider.validate_connection()
         except Exception:
             return False
+
+    def set_provider(self, provider_name: str) -> None:
+        """Set the active provider without recreating the generator.
+
+        Args:
+            provider_name: Provider name to switch to.
+
+        Raises:
+            ValueError: If the provider is not supported.
+        """
+        if provider_name not in self.list_providers():
+            raise ValueError(
+                f"Unknown provider: {provider_name}. "
+                f"Valid options: {', '.join(self.list_providers())}"
+            )
+
+        self.config.default_provider = provider_name
+        # Clear cached provider so it will be recreated on next use
+        self._provider = None
+        self._provider_name = None
     
     def list_providers(self) -> list[str]:
         """List available LLM providers.

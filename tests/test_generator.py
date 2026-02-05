@@ -188,3 +188,31 @@ def test_get_provider_status_no_keys():
     assert status["openai"] is False
     assert status["anthropic"] is False
     assert status["ollama"] is True  # Doesn't need API key
+
+
+def test_get_provider_reuses_cached_instance(mock_config):
+    """Ensure provider instances are reused until switched."""
+    generator = CommandGenerator(config=mock_config)
+
+    with patch("shakka.core.generator.OpenAIProvider") as MockProvider:
+        mock_provider = MagicMock()
+        MockProvider.return_value = mock_provider
+
+        first = generator._get_provider()
+        second = generator._get_provider()
+
+        assert first is second
+        MockProvider.assert_called_once_with(api_key="sk-test-openai")
+
+
+def test_set_provider_switches_and_clears_cache(mock_config):
+    """Switch provider without recreating generator instance."""
+    generator = CommandGenerator(config=mock_config)
+    generator._provider = MagicMock()
+    generator._provider_name = "openai"
+
+    generator.set_provider("anthropic")
+
+    assert generator.config.default_provider == "anthropic"
+    assert generator._provider is None
+    assert generator._provider_name is None

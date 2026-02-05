@@ -1,1 +1,2 @@
-
+ShakkaShell v2 Progress
+- [x] Provider switching works without restart (interactive :provider command and generator switching implemented; tests added)

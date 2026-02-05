@@ -81,6 +81,21 @@ def generate_command(
                 if user_query.lower() in ["exit", "quit", "q"]:
                     display.print_info("Goodbye!")
                     break
+
+                command_text = user_query.strip()
+                if command_text.lower().startswith((":provider", "/provider")):
+                    parts = command_text.split(maxsplit=1)
+                    if len(parts) < 2 or not parts[1].strip():
+                        display.print_error("Usage: :provider <openai|anthropic|ollama>")
+                        continue
+
+                    new_provider = parts[1].strip()
+                    try:
+                        generator.set_provider(new_provider)
+                        display.print_success(f"Switched provider to: {new_provider}")
+                    except ValueError as e:
+                        display.print_error(str(e))
+                    continue
                 
                 if not user_query.strip():
                     continue
