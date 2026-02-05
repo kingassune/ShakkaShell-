@@ -1,194 +1,159 @@
 # ShakkaShell v2.0
 
-> Natural language to offensive security commands
+> State-of-the-art autonomous offensive security platform
 
-ShakkaShell is a CLI tool that converts plain language requests into executable security commands using AI language models (OpenAI, Anthropic Claude, or local Ollama models).
+ShakkaShell 2.0 transforms natural language to security commands using AI, featuring multi-agent orchestration, CVE-to-exploit pipelines, MCP server integration, and persistent vector memory.
 
 ## Features
 
-- 🤖 **Multiple LLM Providers**: OpenAI GPT, Anthropic Claude, or local Ollama models
-- 🎯 **Smart Command Generation**: Converts natural language to security commands
-- 🛡️ **Risk Assessment**: Automatic risk level classification (Low/Medium/High/Critical)
-- ✅ **Command Validation**: Syntax and safety checks
-- 📝 **History Tracking**: SQLite database for command history
-- 🎨 **Rich CLI**: Beautiful terminal interface with colors and formatting
-- ⚙️ **Configurable**: Environment variables and YAML config support
+### Core Capabilities
+- 🤖 **Multiple LLM Providers**: OpenAI, Anthropic Claude, Ollama (local), with automatic fallback
+- 🎯 **Smart Command Generation**: Natural language to security commands with tool-awareness
+- 🛡️ **Safety Layer**: Risk classification, dangerous command detection, YOLO mode
+- 📝 **History Tracking**: SQLite database with search and filtering
+- 💰 **Cost Tracking**: Per-provider token and cost tracking
 
-## Installation
+### v2.0 Advanced Features
+- 🤝 **Multi-Agent Orchestration**: Recon, Exploit, Persistence, and Reporter agents
+- 🔍 **CVE-to-Exploit Pipeline**: NVD, Exploit-DB, GitHub PoC, LLM synthesis
+- 🧠 **Persistent Vector Memory**: ChromaDB-backed knowledge base with semantic search
+- 🌐 **MCP Server**: JSON-RPC 2.0 over stdio/HTTP for AI tool integration
+- 📊 **Report Generation**: Markdown, HTML, DOCX, PDF with CVSS scoring
+- 🎯 **Attack Planning**: Chain-of-thought reasoning with MITRE ATT&CK mapping
+- 🔧 **Tool Detection**: Auto-detect installed tools with fallback alternatives
+- 🍯 **Anti-Honeypot**: Detect security traps with configurable sensitivity
 
-### Prerequisites
+## Quick Start
 
-- Python 3.11+
-- Poetry (recommended) or pip
-
-### Install with Poetry
+### Installation
 
 ```bash
+# Prerequisites: Python 3.11+
+
+# Clone and install
 git clone https://github.com/kingassune/ShakkaShell-.git
 cd ShakkaShell-
+pip install -e .
+
+# Or with Poetry
 poetry install
 ```
 
-### Install with pip
+### Configuration
 
 ```bash
-pip install -e .
-```
-
-## Configuration
-
-### Environment Variables
-
-Set your API keys:
-
-```bash
-# For OpenAI (GPT-3.5/GPT-4)
+# Set API keys
 export OPENAI_API_KEY="sk-..."
-
-# For Anthropic (Claude)
 export ANTHROPIC_API_KEY="sk-ant-..."
 
-# Optional: Set default provider
-export SHAKKA_DEFAULT_PROVIDER="openai"  # or "anthropic" or "ollama"
+# Or use config file (~/.config/shakka/config.yaml)
 ```
 
-### Config File
+## Usage Examples
 
-ShakkaShell uses a config file at:
-- Linux/macOS: `~/.config/shakka/config.yaml`
-- Windows: `%APPDATA%/shakka/config.yaml`
-
-Example `config.yaml`:
-
-```yaml
-default_provider: openai
-debug: false
-max_history: 100
-auto_copy: true
-confirm_execution: true
-```
-
-## Usage
-
-### Generate Commands
+### Basic Command Generation
 
 ```bash
-# Single command generation
-python -m shakka generate "scan ports on 10.0.0.1"
-
-# With specific provider
-python -m shakka generate "find subdomains for example.com" --provider anthropic
-
-# Interactive mode
-python -m shakka generate --interactive
+# Generate security commands
+shakka generate "scan ports on 10.0.0.1"
+shakka generate "enumerate directories on https://target.com"
+shakka generate "find SQL injection in login form" --provider anthropic
 ```
 
-### Example Outputs
+### Agent Mode (Multi-Agent Orchestration)
 
 ```bash
-$ python -m shakka generate "scan ports on 10.0.0.1"
+# Run autonomous multi-agent assessment
+shakka agent "Full recon and initial access assessment on target.com"
+shakka --agent "Compromise the AD controller from external foothold"
 ```
 
-Output:
-```
-╭─ ShakkaShell ──────────────────────────────────╮
-│ Command:                                       │
-│ nmap -sV -sC 10.0.0.1                         │
-├────────────────────────────────────────────────┤
-│ Risk: Medium                                   │
-│ Requires: nmap                                 │
-│                                                │
-│ Performs service version detection and runs   │
-│ default NSE scripts on target host.           │
-╰────────────────────────────────────────────────╯
-```
-
-### View History
+### CVE Exploit Lookup
 
 ```bash
-# Show recent commands
-python -m shakka history
-
-# Show last 20 commands
-python -m shakka history --limit 20
-
-# Clear history
-python -m shakka history --clear
+# Search for exploits by CVE
+shakka exploit CVE-2024-1234
+shakka exploit CVE-2021-44228 --source exploit_db
+shakka exploit CVE-2023-44487 --code --limit 5
+shakka exploit CVE-2020-1472 --no-llm
 ```
 
-### Manage Configuration
+### MCP Server Mode
 
 ```bash
-# Show current configuration
-python -m shakka config --show
-
-# Set default provider
-python -m shakka config --set-provider anthropic
+# Start as MCP server for AI tool integration
+shakka --mcp                    # stdio transport
+shakka --mcp --port 3000        # HTTP transport
 ```
 
-### Validate Providers
+### History & Config
 
 ```bash
-# Validate all configured providers
-python -m shakka validate
-
-# Validate specific provider
-python -m shakka validate --provider openai
+shakka history                  # View command history
+shakka history --limit 20       # Last 20 commands
+shakka config --show            # Show configuration
+shakka validate                 # Validate providers
 ```
 
-## Supported Commands
+## Documentation
 
-ShakkaShell can generate commands for various offensive security tasks:
+See [docs/](docs/README.md) for detailed documentation:
 
-- **Port Scanning**: nmap, masscan
-- **Web Enumeration**: gobuster, ffuf, dirb, nikto
-- **Vulnerability Assessment**: sqlmap, nikto
-- **Password Cracking**: hydra, john, hashcat
-- **Network Analysis**: tcpdump, wireshark
-- **And many more...**
+- [Installation Guide](docs/installation.md)
+- [Configuration](docs/configuration.md)
+- [CLI Reference](docs/cli.md)
+- [Multi-Agent System](docs/agents.md)
+- [MCP Server](docs/mcp.md)
+- [CVE Pipeline](docs/exploit.md)
+- [Safety Layer](docs/safety.md)
+- [Vector Memory](docs/memory.md)
+- [Report Generation](docs/reports.md)
+- [Tool Detection](docs/tools.md)
+- [Anti-Honeypot](docs/honeypot.md)
+## Architecture
 
-## Example Prompts
-
-```bash
-# Network scanning
-"scan ports on 192.168.1.0/24"
-"find live hosts in 10.0.0.0/8"
-
-# Web application testing
-"enumerate directories on https://example.com"
-"test SQL injection on login form at http://target.com/login"
-"find subdomains for example.com"
-
-# Password attacks
-"brute force SSH on 10.0.0.5 with rockyou wordlist"
-"crack MD5 hash with john the ripper"
-
-# Reconnaissance
-"perform DNS enumeration on example.com"
-"scan for SMB vulnerabilities on 192.168.1.10"
 ```
-
-## Risk Levels
-
-ShakkaShell classifies commands by risk level:
-
-- **Low**: Passive reconnaissance, safe information gathering
-- **Medium**: Active scanning, may trigger detection systems
-- **High**: Exploitation attempts, potentially harmful
-- **Critical**: Destructive operations, system modifications
-
-## Safety Features
-
-- ✅ Risk level warnings for all commands
-- ✅ Prerequisite tool checks
-- ✅ Command syntax validation
-- ✅ Alternative command suggestions
-- ✅ Confirmation prompts (configurable)
-- ✅ Dry-run mode for testing
+shakka/
+├── __init__.py           # Package info
+├── __main__.py           # Entry point
+├── cli.py                # Typer CLI interface
+├── config.py             # Configuration management
+├── core/                 # Core command generation
+│   ├── generator.py      # Command generation orchestration
+│   ├── validator.py      # Command validation
+│   └── executor.py       # Optional command execution
+├── providers/            # LLM providers
+│   ├── base.py           # Abstract LLM provider
+│   ├── openai.py         # OpenAI/GPT implementation
+│   ├── anthropic.py      # Claude implementation
+│   └── ollama.py         # Local Ollama implementation
+├── agents/               # Multi-agent system
+│   ├── base.py           # Base agent class
+│   ├── orchestrator.py   # Task planning & coordination
+│   └── roles.py          # Specialized agents (Recon, Exploit, etc.)
+├── mcp/                  # MCP server
+│   ├── server.py         # JSON-RPC 2.0 server
+│   ├── tools.py          # MCP tool definitions
+│   └── transport.py      # stdio/HTTP transports
+├── exploit/              # CVE pipeline
+│   ├── cve.py            # NVD API integration
+│   ├── exploitdb.py      # Exploit-DB search
+│   ├── github.py         # GitHub PoC search
+│   └── pipeline.py       # Pipeline orchestrator
+├── storage/              # Data persistence
+│   ├── models.py         # SQLAlchemy models
+│   ├── database.py       # Database connection
+│   └── history.py        # History CRUD operations
+├── memory/               # Vector memory
+├── reports/              # Report generation
+├── honeypot/             # Anti-honeypot detection
+├── planning/             # Attack planning
+├── tools/                # Tool detection
+└── utils/
+    └── display.py        # Rich console helpers
+```
 
 ## Development
-
-### Run Tests
 
 ```bash
 # Run all tests
@@ -200,51 +165,6 @@ pytest --cov=shakka --cov-report=term-missing
 # Run specific test file
 pytest tests/test_cli.py -v
 ```
-
-### Code Style
-
-```bash
-# Format with ruff
-ruff check shakka/
-
-# Type checking (if using mypy)
-mypy shakka/
-```
-
-## Architecture
-
-```
-shakka/
-├── __init__.py           # Package info
-├── __main__.py           # Entry point
-├── cli.py                # Typer CLI interface
-├── config.py             # Configuration management
-├── core/
-│   ├── generator.py      # Command generation orchestration
-│   ├── validator.py      # Command validation
-│   └── executor.py       # Optional command execution
-├── providers/
-│   ├── base.py          # Abstract LLM provider
-│   ├── openai.py        # OpenAI/GPT implementation
-│   ├── anthropic.py     # Claude implementation
-│   └── ollama.py        # Local Ollama implementation
-├── storage/
-│   ├── models.py        # SQLAlchemy models
-│   ├── database.py      # Database connection
-│   └── history.py       # History CRUD operations
-└── utils/
-    └── display.py       # Rich console helpers
-```
-
-## Contributing
-
-Contributions are welcome! Please:
-
-1. Fork the repository
-2. Create a feature branch
-3. Add tests for new functionality
-4. Ensure all tests pass
-5. Submit a pull request
 
 ## Security Considerations
 
@@ -258,26 +178,11 @@ Contributions are welcome! Please:
 
 ## License
 
-MIT License - see LICENSE file for details
+MIT License - see [LICENSE](LICENSE) for details
 
 ## Disclaimer
 
 This tool is for educational and authorized security testing purposes only. Users are responsible for ensuring they have proper authorization before running any generated commands. The authors are not responsible for misuse or damage caused by this tool.
-
-## Support
-
-- 📖 Documentation: [Project Wiki](#)
-- 🐛 Bug Reports: [GitHub Issues](https://github.com/kingassune/ShakkaShell-/issues)
-- 💬 Discussions: [GitHub Discussions](https://github.com/kingassune/ShakkaShell-/discussions)
-
-## Credits
-
-Built with:
-- [Typer](https://typer.tiangolo.com/) - CLI framework
-- [Rich](https://rich.readthedocs.io/) - Terminal formatting
-- [LiteLLM](https://docs.litellm.ai/) - Unified LLM interface
-- [Pydantic](https://pydantic-docs.helpmanual.io/) - Data validation
-- [SQLAlchemy](https://www.sqlalchemy.org/) - Database ORM
 
 ---
 
