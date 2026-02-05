@@ -147,6 +147,13 @@ class CommandGenerator:
                 f"Valid options: {', '.join(self.list_providers())}"
             )
 
+        status = self.get_provider_status()
+        if not status.get(provider_name, False):
+            raise ValueError(
+                f"Provider '{provider_name}' is not configured. "
+                "Please set the required credentials before switching."
+            )
+
         self.config.default_provider = provider_name
         # Clear cached provider so it will be recreated on next use
         self._provider = None

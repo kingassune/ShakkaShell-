@@ -216,3 +216,12 @@ def test_set_provider_switches_and_clears_cache(mock_config):
     assert generator.config.default_provider == "anthropic"
     assert generator._provider is None
     assert generator._provider_name is None
+
+
+def test_set_provider_requires_configuration():
+    """Prevent switching to providers without credentials configured."""
+    config = ShakkaConfig(openai_api_key="sk-test", default_provider="openai")
+    generator = CommandGenerator(config=config)
+
+    with pytest.raises(ValueError, match="not configured"):
+        generator.set_provider("anthropic")
