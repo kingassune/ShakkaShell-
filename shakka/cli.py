@@ -18,7 +18,6 @@ app = typer.Typer(
 )
 
 PROVIDER_COMMAND_ALIASES = (":provider", "/provider")
-PROVIDER_USAGE_MESSAGE = "Usage: :provider <openai|anthropic|ollama>"
 
 
 def version_callback(value: bool):
@@ -76,6 +75,9 @@ def generate_command(
         # Interactive mode
         display.print_banner()
         display.print_info("Interactive mode. Type 'exit' or 'quit' to exit.\n")
+        provider_usage_message = (
+            f"Usage: :provider <{'|'.join(generator.list_providers())}>"
+        )
         
         while True:
             try:
@@ -89,16 +91,18 @@ def generate_command(
                     continue
 
                 input_parts = user_input.split(maxsplit=1)
+                if not input_parts:
+                    continue
                 command_prefix = input_parts[0].lower()
 
                 if command_prefix in PROVIDER_COMMAND_ALIASES:
                     if len(input_parts) < 2:
-                        display.print_error(PROVIDER_USAGE_MESSAGE)
+                        display.print_error(provider_usage_message)
                         continue
 
                     new_provider = input_parts[1].strip()
                     if not new_provider:
-                        display.print_error(PROVIDER_USAGE_MESSAGE)
+                        display.print_error(provider_usage_message)
                         continue
                     try:
                         generator.set_provider(new_provider)

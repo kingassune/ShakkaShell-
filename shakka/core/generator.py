@@ -142,10 +142,12 @@ class CommandGenerator:
         Raises:
             ValueError: If the provider is not supported.
         """
-        if not self._is_provider_supported(provider_name):
+        providers = self.list_providers()
+
+        if not self._is_provider_supported(provider_name, providers):
             raise ValueError(
                 f"Unsupported provider: {provider_name}. "
-                f"Valid options: {', '.join(self.list_providers())}"
+                f"Valid options: {', '.join(providers)}"
             )
 
         if not self._is_provider_configured(provider_name):
@@ -178,16 +180,20 @@ class CommandGenerator:
             for provider in self.list_providers()
         }
 
-    def _is_provider_supported(self, provider_name: str) -> bool:
+    def _is_provider_supported(
+        self, provider_name: str, providers: Optional[list[str]] = None
+    ) -> bool:
         """Check if provider is supported.
 
         Args:
             provider_name: Provider name to check.
+            providers: Optional cached provider list.
 
         Returns:
             True if the provider is supported, False otherwise.
         """
-        return provider_name in self.list_providers()
+        provider_list = providers or self.list_providers()
+        return provider_name in provider_list
 
     def _is_provider_configured(self, provider_name: str) -> bool:
         """Check configuration for a specific provider.
