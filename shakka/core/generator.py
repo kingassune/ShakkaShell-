@@ -142,14 +142,13 @@ class CommandGenerator:
         Raises:
             ValueError: If the provider is not supported.
         """
-        if provider_name not in self.list_providers():
+        if not self._is_provider_supported(provider_name):
             raise ValueError(
                 f"Unknown provider: {provider_name}. "
                 f"Valid options: {', '.join(self.list_providers())}"
             )
 
-        status = self.get_provider_status()
-        if not status.get(provider_name, False):
+        if not self._is_provider_configured(provider_name):
             raise ValueError(
                 f"Provider '{provider_name}' is not configured. "
                 "Please set the required credentials before switching."
@@ -175,7 +174,20 @@ class CommandGenerator:
             Dictionary mapping provider names to configuration status
         """
         return {
-            "openai": bool(self.config.openai_api_key),
-            "anthropic": bool(self.config.anthropic_api_key),
-            "ollama": True  # Ollama doesn't require API key
+            provider: self._is_provider_configured(provider)
+            for provider in self.list_providers()
         }
+
+    def _is_provider_supported(self, provider_name: str) -> bool:
+        """Check if provider is supported."""
+        return provider_name in self.list_providers()
+
+    def _is_provider_configured(self, provider_name: str) -> bool:
+        """Check configuration for a specific provider."""
+        if provider_name == "openai":
+            return bool(self.config.openai_api_key)
+        if provider_name == "anthropic":
+            return bool(self.config.anthropic_api_key)
+        if provider_name == "ollama":
+            return True
+        return False
