@@ -209,13 +209,13 @@ def test_set_provider_switches_and_clears_cache(mock_config):
     """Switch provider without recreating generator instance."""
     generator = CommandGenerator(config=mock_config)
     generator._provider = MagicMock()
-    generator._provider_name = "openai"
+    generator._cached_provider_name = "openai"
 
     generator.set_provider("anthropic")
 
     assert generator.config.default_provider == "anthropic"
     assert generator._provider is None
-    assert generator._provider_name is None
+    assert generator._cached_provider_name is None
 
 
 def test_set_provider_switches_instance(mock_config):

@@ -77,13 +77,13 @@ def generate_command(
         while True:
             try:
                 user_query = display.prompt("[bold cyan]ShakkaShell>[/bold cyan]")
-                command_text = user_query.strip()
+                user_input = user_query.strip()
                 
-                if command_text.lower() in ["exit", "quit", "q"]:
+                if user_input.lower() in ["exit", "quit", "q"]:
                     display.print_info("Goodbye!")
                     break
 
-                parts = command_text.split(maxsplit=1)
+                parts = user_input.split(maxsplit=1)
                 command_word = parts[0].lower() if parts else ""
 
                 if command_word in (":provider", "/provider"):
@@ -99,7 +99,7 @@ def generate_command(
                         display.print_error(str(e))
                     continue
                 
-                if not command_text:
+                if not user_input:
                     continue
                 
                 # Generate command
