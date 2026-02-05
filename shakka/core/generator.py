@@ -4,7 +4,7 @@ This module coordinates the LLM provider to generate security commands from
 natural language inputs.
 """
 
-from typing import Optional
+from typing import Callable, Optional
 
 from shakka.config import ShakkaConfig
 from shakka.providers.base import CommandResult, LLMProvider
@@ -184,7 +184,7 @@ class CommandGenerator:
 
     def _is_provider_configured(self, provider_name: str) -> bool:
         """Check configuration for a specific provider."""
-        checks: dict[str, callable] = {
+        checks: dict[str, Callable[[], bool]] = {
             "openai": lambda: bool(self.config.openai_api_key),
             "anthropic": lambda: bool(self.config.anthropic_api_key),
             "ollama": lambda: True,
