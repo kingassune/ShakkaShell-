@@ -179,17 +179,35 @@ class CommandGenerator:
         }
 
     def _is_provider_supported(self, provider_name: str) -> bool:
-        """Check if provider is supported."""
+        """Check if provider is supported.
+
+        Args:
+            provider_name: Provider name to check.
+
+        Returns:
+            True if the provider is supported, False otherwise.
+        """
         return provider_name in self.list_providers()
 
     def _is_provider_configured(self, provider_name: str) -> bool:
-        """Check configuration for a specific provider."""
+        """Check configuration for a specific provider.
+
+        Args:
+            provider_name: Provider name to validate.
+
+        Returns:
+            True if the provider has required configuration, False otherwise.
+        """
         validators = self._get_provider_validators()
         validator = validators.get(provider_name)
         return validator() if validator else False
 
     def _get_provider_validators(self) -> dict[str, Callable[[], bool]]:
-        """Return configuration validators for each supported provider."""
+        """Return configuration validators for each supported provider.
+
+        Returns:
+            Mapping of provider names to callables that validate configuration.
+        """
         return {
             "openai": lambda: bool(self.config.openai_api_key),
             "anthropic": lambda: bool(self.config.anthropic_api_key),
