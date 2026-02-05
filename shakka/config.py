@@ -106,6 +106,32 @@ class ShakkaConfig(BaseSettings):
         description="Enable audit logging of all command safety checks"
     )
     
+    # Memory Configuration
+    memory_enabled: bool = Field(
+        default=True,
+        description="Enable persistent vector memory for storing attack knowledge"
+    )
+    
+    memory_privacy_mode: bool = Field(
+        default=False,
+        description="Privacy mode - no persistent storage of memories"
+    )
+    
+    memory_max_entries: int = Field(
+        default=10000,
+        description="Maximum number of memory entries to store"
+    )
+    
+    memory_similarity_threshold: float = Field(
+        default=0.7,
+        description="Minimum similarity score for memory recall (0.0-1.0)"
+    )
+    
+    memory_embedding_provider: str = Field(
+        default="none",
+        description="Embedding provider for semantic memory (openai, ollama, none)"
+    )
+    
     # Application Settings
     config_path: Optional[Path] = Field(
         default=None,
