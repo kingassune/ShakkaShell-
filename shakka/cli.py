@@ -83,8 +83,10 @@ def generate_command(
                     display.print_info("Goodbye!")
                     break
 
-                if command_text.lower().startswith((":provider", "/provider")):
-                    parts = command_text.split(maxsplit=1)
+                parts = command_text.split(maxsplit=1)
+                command_word = parts[0].lower() if parts else ""
+
+                if command_word in (":provider", "/provider"):
                     if len(parts) < 2 or not parts[1].strip():
                         display.print_error("Usage: :provider <openai|anthropic|ollama>")
                         continue

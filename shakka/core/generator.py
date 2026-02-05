@@ -8,7 +8,6 @@ from typing import Optional
 
 from shakka.config import ShakkaConfig
 from shakka.providers.base import CommandResult, LLMProvider
-from shakka.providers.openai import OpenAIProvider
 
 
 class CommandGenerator:
@@ -47,6 +46,8 @@ class CommandGenerator:
             return self._provider
         
         if provider_name == "openai":
+            from shakka.providers.openai import OpenAIProvider
+
             api_key = self.config.openai_api_key
             if not api_key:
                 raise ValueError(

@@ -82,7 +82,7 @@ async def test_generate_success(mock_config, mock_command_result):
     """Test successful command generation."""
     generator = CommandGenerator(config=mock_config)
     
-    with patch("shakka.core.generator.OpenAIProvider") as MockProvider:
+    with patch("shakka.providers.openai.OpenAIProvider") as MockProvider:
         mock_provider = AsyncMock()
         mock_provider.generate.return_value = mock_command_result
         MockProvider.return_value = mock_provider
@@ -107,7 +107,7 @@ async def test_generate_with_provider_override(mock_config, mock_command_result)
     """Test generating with provider override."""
     generator = CommandGenerator(config=mock_config)
     
-    with patch("shakka.core.generator.OpenAIProvider") as MockProvider:
+    with patch("shakka.providers.openai.OpenAIProvider") as MockProvider:
         mock_provider = AsyncMock()
         mock_provider.generate.return_value = mock_command_result
         MockProvider.return_value = mock_provider
@@ -122,7 +122,7 @@ async def test_generate_with_context(mock_config, mock_command_result):
     generator = CommandGenerator(config=mock_config)
     context = {"history": ["previous command"]}
     
-    with patch("shakka.core.generator.OpenAIProvider") as MockProvider:
+    with patch("shakka.providers.openai.OpenAIProvider") as MockProvider:
         mock_provider = AsyncMock()
         mock_provider.generate.return_value = mock_command_result
         MockProvider.return_value = mock_provider
@@ -136,7 +136,7 @@ async def test_validate_provider_success(mock_config):
     """Test successful provider validation."""
     generator = CommandGenerator(config=mock_config)
     
-    with patch("shakka.core.generator.OpenAIProvider") as MockProvider:
+    with patch("shakka.providers.openai.OpenAIProvider") as MockProvider:
         mock_provider = AsyncMock()
         mock_provider.validate_connection.return_value = True
         MockProvider.return_value = mock_provider
@@ -150,7 +150,7 @@ async def test_validate_provider_failure(mock_config):
     """Test provider validation failure."""
     generator = CommandGenerator(config=mock_config)
     
-    with patch("shakka.core.generator.OpenAIProvider") as MockProvider:
+    with patch("shakka.providers.openai.OpenAIProvider") as MockProvider:
         mock_provider = AsyncMock()
         mock_provider.validate_connection.return_value = False
         MockProvider.return_value = mock_provider
@@ -194,7 +194,7 @@ def test_get_provider_reuses_cached_instance(mock_config):
     """Ensure provider instances are reused until switched."""
     generator = CommandGenerator(config=mock_config)
 
-    with patch("shakka.core.generator.OpenAIProvider") as MockProvider:
+    with patch("shakka.providers.openai.OpenAIProvider") as MockProvider:
         mock_provider = MagicMock()
         MockProvider.return_value = mock_provider
 
@@ -222,7 +222,7 @@ def test_set_provider_switches_instance(mock_config):
     """Switching provider recreates correct provider on next use."""
     generator = CommandGenerator(config=mock_config)
 
-    with patch("shakka.core.generator.OpenAIProvider") as MockOpenAI, patch(
+    with patch("shakka.providers.openai.OpenAIProvider") as MockOpenAI, patch(
         "shakka.providers.anthropic.AnthropicProvider"
     ) as MockAnthropic:
         openai_provider = MagicMock()
