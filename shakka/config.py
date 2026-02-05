@@ -74,6 +74,12 @@ class ShakkaConfig(BaseSettings):
         description="Enable automatic fallback to alternative providers"
     )
     
+    # Cost Tracking Configuration
+    enable_cost_tracking: bool = Field(
+        default=True,
+        description="Enable tracking of token usage and costs per provider"
+    )
+    
     # Application Settings
     config_path: Optional[Path] = Field(
         default=None,

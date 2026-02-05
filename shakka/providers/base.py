@@ -9,6 +9,25 @@ from typing import Optional
 from pydantic import BaseModel, Field
 
 
+class UsageInfo(BaseModel):
+    """Token usage information from an LLM call.
+    
+    Attributes:
+        input_tokens: Number of tokens in the prompt/input.
+        output_tokens: Number of tokens in the completion/output.
+        model: The model that was used.
+    """
+    
+    input_tokens: int = Field(default=0, description="Input/prompt tokens")
+    output_tokens: int = Field(default=0, description="Output/completion tokens")
+    model: Optional[str] = Field(default=None, description="Model used")
+    
+    @property
+    def total_tokens(self) -> int:
+        """Total tokens used."""
+        return self.input_tokens + self.output_tokens
+
+
 class CommandResult(BaseModel):
     """Result from LLM command generation.
     
@@ -52,6 +71,11 @@ class CommandResult(BaseModel):
     warnings: list[str] = Field(
         default_factory=list,
         description="Safety warnings for the command"
+    )
+    
+    usage: Optional[UsageInfo] = Field(
+        default=None,
+        description="Token usage information from the LLM call"
     )
     
     def __str__(self) -> str:

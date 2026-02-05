@@ -7,6 +7,7 @@ natural language inputs.
 from typing import Callable, Optional
 
 from shakka.config import ShakkaConfig
+from shakka.core.cost_tracker import CostTracker
 from shakka.providers.base import CommandResult, LLMProvider
 
 
@@ -26,6 +27,7 @@ class CommandGenerator:
         self.config = config or ShakkaConfig()
         self._provider: Optional[LLMProvider] = None
         self._current_provider_name: Optional[str] = None
+        self.cost_tracker = CostTracker(enabled=self.config.enable_cost_tracking)
     
     def _get_provider(self, provider_name: Optional[str] = None) -> LLMProvider:
         """Get or create LLM provider instance.
@@ -116,6 +118,16 @@ class CommandGenerator:
             try:
                 llm_provider = self._get_provider(provider_name)
                 result = await llm_provider.generate(prompt, context)
+                
+                # Record usage for cost tracking
+                if result.usage:
+                    self.cost_tracker.record_usage(
+                        provider=provider_name,
+                        model=result.usage.model or "unknown",
+                        input_tokens=result.usage.input_tokens,
+                        output_tokens=result.usage.output_tokens,
+                    )
+                
                 return result
             except ValueError:
                 # Configuration errors (missing API key) - skip to next provider
@@ -254,3 +266,36 @@ class CommandGenerator:
             "anthropic": lambda: bool(self.config.anthropic_api_key),
             "ollama": lambda: True,
         }
+
+    def get_cost_summary(self) -> dict:
+        """Get a summary of costs across all providers.
+        
+        Returns:
+            Dictionary with total cost, total tokens, and per-provider breakdown.
+        """
+        all_stats = self.cost_tracker.get_all_stats()
+        return {
+            "total_cost": self.cost_tracker.get_total_cost(),
+            "total_tokens": self.cost_tracker.get_total_tokens(),
+            "providers": {
+                name: {
+                    "total_cost": stats.total_cost,
+                    "total_tokens": stats.total_tokens,
+                    "request_count": stats.request_count,
+                    "avg_cost_per_request": stats.avg_cost_per_request,
+                }
+                for name, stats in all_stats.items()
+            },
+        }
+
+    def reset_cost_tracking(self, provider: Optional[str] = None) -> None:
+        """Reset cost tracking data.
+        
+        Args:
+            provider: If provided, reset only that provider's data.
+                     If None, reset all data.
+        """
+        if provider:
+            self.cost_tracker.reset_provider(provider)
+        else:
+            self.cost_tracker.reset()
