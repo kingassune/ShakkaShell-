@@ -186,8 +186,8 @@ class CommandGenerator:
         """Check configuration for a specific provider."""
         if provider_name == "openai":
             return bool(self.config.openai_api_key)
-        if provider_name == "anthropic":
+        elif provider_name == "anthropic":
             return bool(self.config.anthropic_api_key)
-        if provider_name == "ollama":
+        elif provider_name == "ollama":
             return True
         return False
