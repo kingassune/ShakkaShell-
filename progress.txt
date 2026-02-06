@@ -48,6 +48,17 @@ IMPLEMENTATION SUMMARY
 - ✅ Interactive mode
 - ✅ Configuration management (env vars + YAML)
 - ✅ Provider validation
+- ✅ MCP server with stdio/HTTP/SSE transport
+- ✅ Multi-agent orchestration system
+- ✅ CVE exploit pipeline
+- ✅ Attack planning & tool-aware generation
+- ✅ Anti-honeypot detection
+- ✅ Report generation with templates
+- ✅ Vector memory for context
+- ✅ Safety layer with filtering
+- ✅ Cost tracking
+- ✅ Configurable agent models (per-role model/provider)
+- ✅ Interrupt and resume capability (checkpoint persistence)
 
 🚀 Ready to Use:
 ```bash
