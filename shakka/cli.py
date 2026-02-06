@@ -26,6 +26,11 @@ from shakka.exploit import (
     ExploitResult,
     ExploitSource,
 )
+from shakka.mcp import (
+    MCPServer,
+    MCPHTTPTransport,
+    HTTPTransportConfig,
+)
 from shakka.utils import display
 
 app = typer.Typer(
@@ -598,6 +603,120 @@ def exploit_command(
     # Summary
     if len(results) > limit:
         display.print_info(f"Showing {limit} of {len(results)} results. Use --limit to see more.")
+
+
+@app.command(name="mcp")
+def mcp_command(
+    port: Optional[int] = typer.Option(
+        None,
+        "--port",
+        "-p",
+        help="Port for HTTP transport (if not specified, uses stdio)"
+    ),
+    transport: str = typer.Option(
+        "stdio",
+        "--transport",
+        "-t",
+        help="Transport type: stdio, http, or sse"
+    ),
+    host: str = typer.Option(
+        "127.0.0.1",
+        "--host",
+        "-H",
+        help="Host to bind to (for HTTP/SSE transport)"
+    ),
+    auth_token: Optional[str] = typer.Option(
+        None,
+        "--auth-token",
+        help="Bearer token for HTTP authentication"
+    ),
+):
+    """Start MCP (Model Context Protocol) server.
+    
+    Exposes ShakkaShell as an MCP server for integration with AI clients
+    like Claude Desktop, VS Code with Continue/Copilot, and Cursor IDE.
+    
+    Transport modes:
+      - stdio: JSON-RPC over standard input/output (default)
+      - http: JSON-RPC over HTTP POST
+      - sse: HTTP with Server-Sent Events for notifications
+    
+    Examples:
+        shakka mcp                          # Start stdio server
+        shakka mcp --port 3000              # Start HTTP server on port 3000
+        shakka mcp --transport sse -p 3000  # HTTP with SSE support
+        shakka mcp -p 3000 --auth-token secret  # HTTP with authentication
+    """
+    # Validate transport option
+    valid_transports = ["stdio", "http", "sse"]
+    transport = transport.lower()
+    if transport not in valid_transports:
+        display.print_error(f"Invalid transport: {transport}")
+        display.print_info(f"Valid transports: {', '.join(valid_transports)}")
+        raise typer.Exit(code=1)
+    
+    # If port is specified, default to HTTP transport
+    if port is not None and transport == "stdio":
+        transport = "http"
+    
+    # Create MCP server
+    server = MCPServer()
+    
+    if transport == "stdio":
+        # Stdio transport
+        display.print_info("Starting MCP server with stdio transport...")
+        display.print_info("Waiting for JSON-RPC messages on stdin...")
+        display.console.print()
+        display.console.print("[dim]Press Ctrl+C to stop[/dim]")
+        
+        try:
+            asyncio.run(server.run_stdio())
+        except KeyboardInterrupt:
+            display.print_info("\nMCP server stopped.")
+    
+    else:
+        # HTTP or SSE transport
+        if port is None:
+            port = 3000
+        
+        # Configure HTTP transport
+        http_config = HTTPTransportConfig(
+            host=host,
+            port=port,
+            cors_enabled=True,
+            auth_enabled=auth_token is not None,
+            auth_token=auth_token,
+            enable_sse=(transport == "sse"),
+        )
+        
+        # Create and start HTTP transport
+        http_transport = MCPHTTPTransport(server, config=http_config)
+        
+        display.console.print(Panel(
+            f"[bold cyan]MCP Server[/bold cyan]\n\n"
+            f"[bold]Transport:[/bold] {transport.upper()}\n"
+            f"[bold]Address:[/bold] {http_transport.address}\n"
+            f"[bold]SSE Enabled:[/bold] {'Yes' if transport == 'sse' else 'No'}\n"
+            f"[bold]Auth:[/bold] {'Enabled' if auth_token else 'Disabled'}",
+            title="[bold green]MCP Server Started[/bold green]",
+            border_style="green",
+        ))
+        display.console.print()
+        display.console.print("[dim]Endpoints:[/dim]")
+        display.console.print(f"  [dim]Health:[/dim] {http_transport.address}/health")
+        display.console.print(f"  [dim]Info:[/dim] {http_transport.address}/info")
+        display.console.print(f"  [dim]JSON-RPC:[/dim] POST {http_transport.address}/")
+        if transport == "sse":
+            display.console.print(f"  [dim]SSE Stream:[/dim] {http_transport.address}/sse")
+        display.console.print()
+        display.console.print("[dim]Press Ctrl+C to stop[/dim]")
+        
+        try:
+            http_transport.start(blocking=True)
+        except KeyboardInterrupt:
+            display.print_info("\nMCP server stopped.")
+        finally:
+            http_transport.stop()
 
 
 if __name__ == "__main__":
