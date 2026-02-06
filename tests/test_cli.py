@@ -889,3 +889,288 @@ class TestMemoryImports:
         assert MemoryType is not None
 
 
+class TestPlanCommand:
+    """Tests for the plan command via CliRunner."""
+
+    def _mock_plan(self):
+        """Create a mock AttackPlan for testing."""
+        from shakka.planning import (
+            AttackPlan, AttackStep, PlanPhase, RiskLevel,
+            StepAction, AlternativePath,
+        )
+        return AttackPlan(
+            objective="Get domain admin",
+            thinking="Need to escalate privileges through AD",
+            current_position="external foothold",
+            steps=[
+                AttackStep(
+                    phase=PlanPhase.INITIAL_ACCESS,
+                    title="Establish Internal Access",
+                    goal="Gain access to internal network",
+                    reasoning="Need to pivot from external position",
+                    actions=[
+                        StepAction(
+                            description="Check for SSRF",
+                            command="ffuf -u http://target/fetch?url=FUZZ",
+                            tool="ffuf",
+                            technique_id="T1090",
+                        ),
+                    ],
+                    alternatives=[
+                        AlternativePath(
+                            condition="If web vulns not found",
+                            description="Try VPN endpoints",
+                            actions=[StepAction(description="Scan for VPN")],
+                        ),
+                    ],
+                    risk_level=RiskLevel.MEDIUM,
+                    risk_factors=["May trigger WAF"],
+                    detection_notes="WAF may block payloads",
+                ),
+                AttackStep(
+                    phase=PlanPhase.CREDENTIAL_ACCESS,
+                    title="Credential Harvesting",
+                    goal="Obtain valid domain credentials",
+                    reasoning="Kerberoasting is low-noise",
+                    actions=[
+                        StepAction(
+                            description="Kerberoasting attack",
+                            command="GetUserSPNs.py domain/user:pass -request",
+                            tool="impacket",
+                            technique_id="T1558.003",
+                        ),
+                    ],
+                    risk_level=RiskLevel.LOW,
+                    risk_factors=["Hashes may be slow to crack"],
+                ),
+            ],
+            recommended_first_step="ffuf -u http://target/fetch?url=FUZZ",
+            overall_risk=RiskLevel.MEDIUM,
+            estimated_time="4-8 hours",
+            success_probability=0.65,
+        )
+
+    def test_plan_command_basic(self):
+        """Test plan command with valid objective."""
+        with patch("shakka.cli.AttackPlanner") as MockPlanner:
+            mock_planner = MockPlanner.return_value
+            mock_planner.plan = AsyncMock(return_value=self._mock_plan())
+
+            result = runner.invoke(app, ["plan", "Get domain admin"])
+            # Should not crash
+            assert "Planning failed" not in result.stdout
+
+    def test_plan_command_with_verbose(self):
+        """Test plan command with --verbose flag."""
+        with patch("shakka.cli.AttackPlanner") as MockPlanner:
+            mock_planner = MockPlanner.return_value
+            mock_planner.plan = AsyncMock(return_value=self._mock_plan())
+
+            result = runner.invoke(app, ["plan", "Get domain admin", "--verbose"])
+            assert "Planning failed" not in result.stdout
+
+    def test_plan_command_with_max_steps(self):
+        """Test plan command with --max-steps option."""
+        with patch("shakka.cli.AttackPlanner") as MockPlanner:
+            mock_planner = MockPlanner.return_value
+            mock_planner.plan = AsyncMock(return_value=self._mock_plan())
+
+            result = runner.invoke(app, ["plan", "Test objective", "--max-steps", "5"])
+            assert "Planning failed" not in result.stdout
+
+    def test_plan_command_with_json(self):
+        """Test plan command with --json flag."""
+        with patch("shakka.cli.AttackPlanner") as MockPlanner:
+            mock_planner = MockPlanner.return_value
+            mock_planner.plan = AsyncMock(return_value=self._mock_plan())
+
+            result = runner.invoke(app, ["plan", "Get domain admin", "--json"])
+            assert "Planning failed" not in result.stdout
+
+    def test_plan_command_with_position(self):
+        """Test plan command with --position flag."""
+        with patch("shakka.cli.AttackPlanner") as MockPlanner:
+            mock_planner = MockPlanner.return_value
+            mock_planner.plan = AsyncMock(return_value=self._mock_plan())
+
+            result = runner.invoke(app, [
+                "plan", "Escalate privileges",
+                "--position", "Low-priv shell on web server"
+            ])
+            assert "Planning failed" not in result.stdout
+
+
+class TestPlanFunctionsDirect:
+    """Test plan CLI function directly (bypassing typer)."""
+
+    def _mock_plan(self, with_steps=True):
+        """Create a mock AttackPlan."""
+        from shakka.planning import (
+            AttackPlan, AttackStep, PlanPhase, RiskLevel,
+            StepAction, AlternativePath,
+        )
+        steps = []
+        if with_steps:
+            steps = [
+                AttackStep(
+                    phase=PlanPhase.DISCOVERY,
+                    title="Network Recon",
+                    goal="Map internal network",
+                    reasoning="Need to identify targets",
+                    actions=[
+                        StepAction(
+                            description="Port scan",
+                            command="nmap -sV 10.0.0.0/24",
+                            tool="nmap",
+                            technique_id="T1046",
+                        ),
+                    ],
+                    alternatives=[
+                        AlternativePath(
+                            condition="If nmap blocked",
+                            description="Use masscan",
+                            actions=[StepAction(description="Use masscan")],
+                        ),
+                    ],
+                    risk_level=RiskLevel.LOW,
+                    risk_factors=["Scanning may alert IDS"],
+                    detection_notes="SIEM may alert on port scans",
+                ),
+            ]
+        return AttackPlan(
+            objective="Test objective",
+            thinking="Analyzing the target...",
+            steps=steps,
+            recommended_first_step="nmap -sV 10.0.0.0/24",
+            overall_risk=RiskLevel.MEDIUM,
+            estimated_time="2-4 hours",
+            success_probability=0.7,
+        )
+
+    def test_plan_function_calls_planner(self):
+        """Test plan_command function calls AttackPlanner."""
+        from shakka.cli import plan_command
+        import typer
+
+        with patch("shakka.cli.AttackPlanner") as MockPlanner:
+            mock_planner = MockPlanner.return_value
+            mock_planner.plan = AsyncMock(return_value=self._mock_plan())
+
+            # plan_command doesn't raise Exit on success (no explicit exit)
+            plan_command("Get domain admin", False, 10, False, False, None, False)
+
+            mock_planner.plan.assert_called_once()
+            call_args = mock_planner.plan.call_args
+            assert call_args[0][0] == "Get domain admin"
+
+    def test_plan_function_with_position_context(self):
+        """Test plan_command passes context with position."""
+        from shakka.cli import plan_command
+
+        with patch("shakka.cli.AttackPlanner") as MockPlanner:
+            mock_planner = MockPlanner.return_value
+            mock_planner.plan = AsyncMock(return_value=self._mock_plan())
+
+            plan_command("Test", False, 10, False, False, "external foothold", False)
+
+            call_kwargs = mock_planner.plan.call_args[1]
+            assert call_kwargs["context"] == {"position": "external foothold"}
+
+    def test_plan_function_no_position_no_context(self):
+        """Test plan_command passes None context when no position given."""
+        from shakka.cli import plan_command
+
+        with patch("shakka.cli.AttackPlanner") as MockPlanner:
+            mock_planner = MockPlanner.return_value
+            mock_planner.plan = AsyncMock(return_value=self._mock_plan())
+
+            plan_command("Test", False, 10, False, False, None, False)
+
+            call_kwargs = mock_planner.plan.call_args[1]
+            assert call_kwargs["context"] is None
+
+    def test_plan_function_passes_config(self):
+        """Test plan_command creates PlannerConfig correctly."""
+        from shakka.cli import plan_command
+
+        with patch("shakka.cli.AttackPlanner") as MockPlanner:
+            mock_planner = MockPlanner.return_value
+            mock_planner.plan = AsyncMock(return_value=self._mock_plan())
+
+            plan_command("Test", True, 5, True, True, None, False)
+
+            # Check PlannerConfig was passed
+            config_arg = MockPlanner.call_args[1]["config"]
+            assert config_arg.max_steps == 5
+            assert config_arg.include_alternatives is False  # no_alternatives=True
+            assert config_arg.include_risk_assessment is False  # no_risk=True
+            assert config_arg.verbose_thinking is True
+
+    def test_plan_function_empty_plan_exits(self):
+        """Test plan_command exits gracefully when no steps generated."""
+        from shakka.cli import plan_command
+        import typer
+
+        with patch("shakka.cli.AttackPlanner") as MockPlanner:
+            mock_planner = MockPlanner.return_value
+            mock_planner.plan = AsyncMock(return_value=self._mock_plan(with_steps=False))
+
+            with pytest.raises(typer.Exit) as exc_info:
+                plan_command("Test", False, 10, False, False, None, False)
+            assert exc_info.value.exit_code == 0
+
+    def test_plan_function_json_output_exits(self):
+        """Test plan_command with json=True outputs JSON and exits."""
+        from shakka.cli import plan_command
+        import typer
+
+        with patch("shakka.cli.AttackPlanner") as MockPlanner:
+            mock_planner = MockPlanner.return_value
+            mock_planner.plan = AsyncMock(return_value=self._mock_plan())
+
+            with pytest.raises(typer.Exit) as exc_info:
+                plan_command("Test", False, 10, False, False, None, True)
+            assert exc_info.value.exit_code == 0
+
+    def test_plan_function_error_handling(self):
+        """Test plan_command handles planner errors gracefully."""
+        from shakka.cli import plan_command
+        import typer
+
+        with patch("shakka.cli.AttackPlanner") as MockPlanner:
+            mock_planner = MockPlanner.return_value
+            mock_planner.plan = AsyncMock(side_effect=Exception("LLM unavailable"))
+
+            with pytest.raises(typer.Exit) as exc_info:
+                plan_command("Test", False, 10, False, False, None, False)
+            assert exc_info.value.exit_code == 1
+
+    def test_plan_function_verbose_shows_thinking(self):
+        """Test plan_command with verbose flag processes thinking."""
+        from shakka.cli import plan_command
+
+        with patch("shakka.cli.AttackPlanner") as MockPlanner:
+            mock_planner = MockPlanner.return_value
+            plan = self._mock_plan()
+            plan.thinking = "Detailed reasoning about the attack vector..."
+            mock_planner.plan = AsyncMock(return_value=plan)
+
+            # Should not crash when verbose is True
+            plan_command("Test", True, 10, False, False, None, False)
+            mock_planner.plan.assert_called_once()
+
+
+class TestPlanImports:
+    """Test plan-related imports are available in CLI."""
+
+    def test_attack_planner_import(self):
+        """Test AttackPlanner is importable from CLI module."""
+        from shakka.cli import AttackPlanner
+        assert AttackPlanner is not None
+
+    def test_planner_config_import(self):
+        """Test PlannerConfig is importable from CLI module."""
+        from shakka.cli import PlannerConfig
+        assert PlannerConfig is not None
+
+

@@ -31,6 +31,7 @@ from shakka.mcp import (
     MCPHTTPTransport,
     HTTPTransportConfig,
 )
+from shakka.planning import AttackPlanner, PlannerConfig
 from shakka.storage import MemoryStore, MemoryType
 from shakka.utils import display
 
@@ -938,6 +939,199 @@ def forget_command(
     except Exception as e:
         display.print_error(f"Failed to delete memories: {e}")
         raise typer.Exit(code=1)
+
+
+@app.command(name="plan")
+def plan_command(
+    objective: str = typer.Argument(
+        ...,
+        help="Attack objective to plan (e.g., 'Get domain admin from external foothold')"
+    ),
+    verbose: bool = typer.Option(
+        False,
+        "--verbose",
+        "-v",
+        help="Show detailed reasoning / thinking process"
+    ),
+    max_steps: int = typer.Option(
+        10,
+        "--max-steps",
+        "-m",
+        help="Maximum number of steps in the plan"
+    ),
+    no_alternatives: bool = typer.Option(
+        False,
+        "--no-alternatives",
+        help="Disable alternative path generation"
+    ),
+    no_risk: bool = typer.Option(
+        False,
+        "--no-risk",
+        help="Disable risk assessment"
+    ),
+    position: Optional[str] = typer.Option(
+        None,
+        "--position",
+        "-p",
+        help="Current position / starting point description"
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        "-j",
+        help="Output plan as JSON"
+    ),
+):
+    """Generate a chain-of-thought attack plan.
+    
+    Creates a step-by-step attack plan with reasoning, risk assessment,
+    alternative paths, and detection notes.
+    
+    Examples:
+        shakka plan "Get domain admin from external foothold"
+        shakka plan "Exploit web application SQL injection" --verbose
+        shakka plan "Pivot through internal network" --max-steps 5
+        shakka plan "Escalate privileges" --position "Low-priv shell on web server"
+        shakka plan "Exfiltrate data" --json
+    """
+    import json as json_lib
+
+    # Build planner config
+    config = PlannerConfig(
+        max_steps=max_steps,
+        include_alternatives=not no_alternatives,
+        include_risk_assessment=not no_risk,
+        verbose_thinking=verbose,
+    )
+
+    planner = AttackPlanner(config=config)
+
+    # Build context
+    context = None
+    if position:
+        context = {"position": position}
+
+    display.console.print(Panel(
+        f"[bold cyan]Planning attack:[/bold cyan] {objective}",
+        title="[bold green]Attack Planner[/bold green]",
+        border_style="green",
+    ))
+    display.console.print()
+
+    # Generate plan
+    try:
+        with display.print_spinner_context("Generating attack plan..."):
+            plan = asyncio.run(planner.plan(objective, context=context))
+    except Exception as e:
+        display.print_error(f"Planning failed: {e}")
+        raise typer.Exit(code=1)
+
+    # Handle empty plan
+    if not plan.steps:
+        display.print_warning("No plan could be generated for this objective")
+        raise typer.Exit(code=0)
+
+    # JSON output
+    if json_output:
+        display.console.print(Syntax(
+            json_lib.dumps(plan.to_dict(), indent=2),
+            "json",
+            theme="monokai",
+        ))
+        raise typer.Exit(code=0)
+
+    # Display thinking section
+    if verbose and plan.thinking:
+        display.console.print(Panel(
+            plan.thinking,
+            title="[bold yellow]AI Thinking[/bold yellow]",
+            border_style="yellow",
+        ))
+        display.console.print()
+
+    # Display steps table
+    risk_icons = {
+        "low": "🟢 Low",
+        "medium": "🟡 Medium",
+        "high": "🟠 High",
+        "critical": "🔴 Critical",
+    }
+
+    table = Table(
+        title=f"Attack Plan: {objective}",
+        show_header=True,
+        header_style="bold cyan",
+    )
+    table.add_column("#", style="dim", width=3)
+    table.add_column("Phase", width=18)
+    table.add_column("Step", min_width=25)
+    table.add_column("Risk", justify="center", width=14)
+
+    for i, step in enumerate(plan.steps, 1):
+        phase_name = step.phase.value.replace("_", " ").title()
+        risk_display = risk_icons.get(step.risk_level.value, step.risk_level.value)
+        table.add_row(str(i), phase_name, step.title, risk_display)
+
+    display.console.print(table)
+    display.console.print()
+
+    # Display detailed steps
+    for i, step in enumerate(plan.steps, 1):
+        phase_name = step.phase.value.replace("_", " ").upper()
+        risk_display = risk_icons.get(step.risk_level.value, step.risk_level.value)
+
+        step_lines = [f"[bold]Goal:[/bold] {step.goal}"]
+
+        if step.reasoning:
+            step_lines.append(f"[dim]Reasoning:[/dim] {step.reasoning}")
+
+        # Actions
+        if step.actions:
+            step_lines.append("")
+            step_lines.append("[bold]Actions:[/bold]")
+            for action in step.actions:
+                if action.command:
+                    step_lines.append(f"  → [cyan]{action.command}[/cyan]")
+                else:
+                    step_lines.append(f"  → {action.description}")
+                if action.technique_id:
+                    step_lines.append(f"    [dim]MITRE: {action.technique_id}[/dim]")
+
+        # Alternatives
+        if step.alternatives and not no_alternatives:
+            step_lines.append("")
+            step_lines.append("[bold]Alternatives:[/bold]")
+            for alt in step.alternatives:
+                step_lines.append(f"  ↳ [italic]{alt.condition}[/italic]: {alt.description}")
+
+        # Risk factors
+        if step.risk_factors and not no_risk:
+            step_lines.append("")
+            step_lines.append(f"[bold]Risk:[/bold] {risk_display}")
+            for factor in step.risk_factors:
+                step_lines.append(f"  ⚠ {factor}")
+
+        # Detection notes
+        if step.detection_notes:
+            step_lines.append(f"[dim]Detection: {step.detection_notes}[/dim]")
+
+        display.console.print(Panel(
+            "\n".join(step_lines),
+            title=f"[bold]Step {i}: {phase_name} - {step.title}[/bold]",
+            border_style="blue",
+        ))
+
+    # Summary
+    display.console.print()
+    overall_risk = risk_icons.get(plan.overall_risk.value, plan.overall_risk.value)
+    display.print_info(f"Overall Risk: {overall_risk}")
+    if plan.estimated_time:
+        display.print_info(f"Estimated Time: {plan.estimated_time}")
+    if plan.success_probability > 0:
+        display.print_info(f"Success Probability: {plan.success_probability:.0%}")
+    if plan.recommended_first_step:
+        display.console.print()
+        display.print_success(f"Recommended first step: {plan.recommended_first_step}")
 
 
 if __name__ == "__main__":
