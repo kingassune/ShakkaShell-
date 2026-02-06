@@ -5,11 +5,14 @@ The Orchestrator is responsible for:
 - Assigning work to specialized agents
 - Handling failures and retries
 - Managing the overall workflow state
+- Saving checkpoints for interrupt/resume capability
 """
 
+import json
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
+from pathlib import Path
 from typing import Optional
 
 from .base import Agent, AgentConfig, AgentResult, AgentRole, AgentState
@@ -64,7 +67,31 @@ class TaskStep:
             "dependencies": self.dependencies,
             "result": self.result.to_dict() if self.result else None,
             "retry_count": self.retry_count,
+            "max_retries": self.max_retries,
         }
+    
+    @classmethod
+    def from_dict(cls, data: dict) -> "TaskStep":
+        """Create a TaskStep from a dictionary.
+        
+        Args:
+            data: Dictionary with step data.
+            
+        Returns:
+            TaskStep instance.
+        """
+        step = cls(
+            step_id=data["step_id"],
+            description=data["description"],
+            assigned_agent=AgentRole(data["assigned_agent"]),
+            status=StepStatus(data.get("status", "pending")),
+            dependencies=data.get("dependencies", []),
+            retry_count=data.get("retry_count", 0),
+            max_retries=data.get("max_retries", 3),
+        )
+        if data.get("result"):
+            step.result = AgentResult.from_dict(data["result"])
+        return step
 
 
 @dataclass
@@ -190,6 +217,78 @@ class TaskPlan:
             "status": self.status,
             "progress": self.progress,
         }
+    
+    @classmethod
+    def from_dict(cls, data: dict) -> "TaskPlan":
+        """Create a TaskPlan from a dictionary.
+        
+        Args:
+            data: Dictionary with plan data.
+            
+        Returns:
+            TaskPlan instance.
+        """
+        plan = cls(
+            plan_id=data["plan_id"],
+            objective=data["objective"],
+            created_at=data.get("created_at", datetime.now().isoformat()),
+            status=data.get("status", "pending"),
+        )
+        for step_data in data.get("steps", []):
+            step = TaskStep.from_dict(step_data)
+            plan.steps.append(step)
+        return plan
+    
+    def save_checkpoint(self, path: str | Path) -> None:
+        """Save plan state to a checkpoint file.
+        
+        Serializes the current plan state including all step statuses
+        and results for later resumption.
+        
+        Args:
+            path: Path to save checkpoint file.
+        """
+        checkpoint_path = Path(path)
+        checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
+        
+        checkpoint_data = {
+            "version": "1.0",
+            "checkpoint_time": datetime.now().isoformat(),
+            "plan": self.to_dict(),
+        }
+        
+        checkpoint_path.write_text(json.dumps(checkpoint_data, indent=2))
+    
+    @classmethod
+    def load_checkpoint(cls, path: str | Path) -> "TaskPlan":
+        """Load a plan from a checkpoint file.
+        
+        Restores the plan state from a previously saved checkpoint.
+        
+        Args:
+            path: Path to checkpoint file.
+            
+        Returns:
+            TaskPlan instance with restored state.
+            
+        Raises:
+            FileNotFoundError: If checkpoint file doesn't exist.
+            ValueError: If checkpoint format is invalid.
+        """
+        checkpoint_path = Path(path)
+        
+        if not checkpoint_path.exists():
+            raise FileNotFoundError(f"Checkpoint not found: {path}")
+        
+        try:
+            checkpoint_data = json.loads(checkpoint_path.read_text())
+        except json.JSONDecodeError as e:
+            raise ValueError(f"Invalid checkpoint format: {e}")
+        
+        if "plan" not in checkpoint_data:
+            raise ValueError("Checkpoint missing plan data")
+        
+        return cls.from_dict(checkpoint_data["plan"])
     
     def format_plan(self) -> str:
         """Format plan for display.
@@ -490,6 +589,134 @@ class Orchestrator(Agent):
             List of past plans.
         """
         return list(self._plan_history)
+    
+    def interrupt_with_checkpoint(self, checkpoint_path: str | Path) -> bool:
+        """Interrupt execution and save checkpoint for resumption.
+        
+        Signals the orchestrator to stop execution and saves the current
+        plan state to a checkpoint file.
+        
+        Args:
+            checkpoint_path: Path to save checkpoint file.
+            
+        Returns:
+            True if checkpoint saved successfully.
+        """
+        self.interrupt()
+        
+        if self._current_plan:
+            self._current_plan.save_checkpoint(checkpoint_path)
+            self._log_event("checkpoint_saved", {
+                "path": str(checkpoint_path),
+                "plan_id": self._current_plan.plan_id,
+                "progress": self._current_plan.progress,
+            })
+            return True
+        return False
+    
+    async def resume(
+        self,
+        checkpoint_path: str | Path,
+        context: Optional[dict] = None,
+    ) -> AgentResult:
+        """Resume execution from a saved checkpoint.
+        
+        Loads a previously saved checkpoint and continues execution
+        from where it was interrupted.
+        
+        Args:
+            checkpoint_path: Path to checkpoint file.
+            context: Optional additional context.
+            
+        Returns:
+            Aggregated result from remaining steps.
+            
+        Raises:
+            FileNotFoundError: If checkpoint doesn't exist.
+            ValueError: If checkpoint format is invalid.
+        """
+        # Load the checkpoint
+        plan = TaskPlan.load_checkpoint(checkpoint_path)
+        self._current_plan = plan
+        self._interrupted = False
+        
+        self._log_event("checkpoint_loaded", {
+            "path": str(checkpoint_path),
+            "plan_id": plan.plan_id,
+            "progress": plan.progress,
+        })
+        
+        # Continue execution
+        self._set_state(AgentState.EXECUTING)
+        results: list[AgentResult] = []
+        
+        # Collect results from already completed steps
+        for step in plan.steps:
+            if step.status == StepStatus.COMPLETED and step.result:
+                results.append(step.result)
+        
+        while not plan.is_complete and not self._interrupted:
+            ready_steps = plan.get_ready_steps()
+            
+            if not ready_steps:
+                if any(s.status == StepStatus.PENDING for s in plan.steps):
+                    break
+                break
+            
+            for step in ready_steps:
+                if self._interrupted:
+                    break
+                
+                step.status = StepStatus.IN_PROGRESS
+                
+                agent = self._agents.get(step.assigned_agent)
+                if agent is None:
+                    step.status = StepStatus.SKIPPED
+                    self._log_event("step_skipped", {
+                        "step_id": step.step_id,
+                        "reason": f"No agent for role {step.assigned_agent.value}",
+                    })
+                    continue
+                
+                step_context = context.copy() if context else {}
+                step_context["previous_results"] = [r.to_dict() for r in results]
+                step_context["plan"] = plan.to_dict()
+                step_context["resumed"] = True
+                
+                result = await agent.run(step.description, step_context)
+                results.append(result)
+                
+                plan.mark_step_complete(step.step_id, result)
+                
+                self._log_event("step_completed", {
+                    "step_id": step.step_id,
+                    "success": result.success,
+                })
+                
+                if not result.success and step.can_retry:
+                    step.retry_count += 1
+                    step.status = StepStatus.PENDING
+                    self._log_event("step_retry", {
+                        "step_id": step.step_id,
+                        "attempt": step.retry_count,
+                    })
+        
+        self._plan_history.append(plan)
+        
+        all_success = all(r.success for r in results)
+        all_output = "\n\n".join(f"[{i+1}] {r.output}" for i, r in enumerate(results) if r.output)
+        total_tokens = sum(r.tokens_used for r in results)
+        
+        return AgentResult(
+            success=all_success,
+            output=all_output or "Task completed",
+            data={
+                "plan": plan.to_dict(),
+                "step_results": [r.to_dict() for r in results],
+                "resumed": True,
+            },
+            tokens_used=total_tokens,
+        )
     
     def format_status(self) -> str:
         """Format orchestrator status including registered agents.

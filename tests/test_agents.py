@@ -933,3 +933,249 @@ class TestCreateAgentFromConfig:
         
         # Persistence uses default
         assert persistence.config.model == "gpt-4o-mini"
+
+
+class TestInterruptResume:
+    """Tests for interrupt and resume capability."""
+    
+    @pytest.fixture
+    def temp_checkpoint_dir(self, tmp_path):
+        """Create a temporary directory for checkpoints."""
+        return tmp_path / "checkpoints"
+    
+    def test_task_step_from_dict(self):
+        """Test creating TaskStep from dictionary."""
+        data = {
+            "step_id": "step_1",
+            "description": "Scan network",
+            "assigned_agent": "recon",
+            "status": "completed",
+            "dependencies": [],
+            "retry_count": 1,
+            "max_retries": 3,
+            "result": {
+                "success": True,
+                "output": "Found 3 hosts",
+                "data": {"hosts": 3},
+                "error": None,
+                "execution_time": 1.5,
+                "tokens_used": 100,
+            },
+        }
+        
+        step = TaskStep.from_dict(data)
+        
+        assert step.step_id == "step_1"
+        assert step.description == "Scan network"
+        assert step.assigned_agent == AgentRole.RECON
+        assert step.status == StepStatus.COMPLETED
+        assert step.retry_count == 1
+        assert step.max_retries == 3
+        assert step.result is not None
+        assert step.result.success is True
+        assert step.result.output == "Found 3 hosts"
+    
+    def test_task_step_from_dict_minimal(self):
+        """Test creating TaskStep from minimal dictionary."""
+        data = {
+            "step_id": "step_1",
+            "description": "Test step",
+            "assigned_agent": "exploit",
+        }
+        
+        step = TaskStep.from_dict(data)
+        
+        assert step.step_id == "step_1"
+        assert step.status == StepStatus.PENDING
+        assert step.result is None
+        assert step.retry_count == 0
+    
+    def test_task_plan_from_dict(self):
+        """Test creating TaskPlan from dictionary."""
+        data = {
+            "plan_id": "plan_123",
+            "objective": "Full assessment",
+            "status": "pending",
+            "created_at": "2024-01-01T00:00:00",
+            "steps": [
+                {
+                    "step_id": "step_1",
+                    "description": "Recon",
+                    "assigned_agent": "recon",
+                    "status": "completed",
+                    "dependencies": [],
+                },
+                {
+                    "step_id": "step_2",
+                    "description": "Exploit",
+                    "assigned_agent": "exploit",
+                    "status": "pending",
+                    "dependencies": ["step_1"],
+                },
+            ],
+        }
+        
+        plan = TaskPlan.from_dict(data)
+        
+        assert plan.plan_id == "plan_123"
+        assert plan.objective == "Full assessment"
+        assert len(plan.steps) == 2
+        assert plan.steps[0].status == StepStatus.COMPLETED
+        assert plan.steps[1].status == StepStatus.PENDING
+    
+    def test_save_and_load_checkpoint(self, temp_checkpoint_dir):
+        """Test saving and loading a checkpoint."""
+        # Create plan with some progress
+        plan = TaskPlan(plan_id="plan_test", objective="Test save/load")
+        plan.add_step("Recon", AgentRole.RECON)
+        plan.add_step("Exploit", AgentRole.EXPLOIT, dependencies=["step_1"])
+        
+        # Mark first step complete
+        result = AgentResult(success=True, output="Recon done", data={"hosts": 5})
+        plan.mark_step_complete("step_1", result)
+        
+        # Save checkpoint
+        checkpoint_path = temp_checkpoint_dir / "test.json"
+        plan.save_checkpoint(checkpoint_path)
+        
+        assert checkpoint_path.exists()
+        
+        # Load checkpoint
+        loaded_plan = TaskPlan.load_checkpoint(checkpoint_path)
+        
+        assert loaded_plan.plan_id == "plan_test"
+        assert loaded_plan.objective == "Test save/load"
+        assert len(loaded_plan.steps) == 2
+        
+        # Verify step states preserved
+        step1 = loaded_plan.get_step("step_1")
+        assert step1.status == StepStatus.COMPLETED
+        assert step1.result.success is True
+        assert step1.result.data == {"hosts": 5}
+        
+        step2 = loaded_plan.get_step("step_2")
+        assert step2.status == StepStatus.PENDING
+    
+    def test_load_checkpoint_not_found(self, temp_checkpoint_dir):
+        """Test loading non-existent checkpoint raises error."""
+        with pytest.raises(FileNotFoundError, match="Checkpoint not found"):
+            TaskPlan.load_checkpoint(temp_checkpoint_dir / "nonexistent.json")
+    
+    def test_load_checkpoint_invalid_json(self, temp_checkpoint_dir):
+        """Test loading invalid JSON raises error."""
+        checkpoint_path = temp_checkpoint_dir / "invalid.json"
+        checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
+        checkpoint_path.write_text("not valid json {{{")
+        
+        with pytest.raises(ValueError, match="Invalid checkpoint format"):
+            TaskPlan.load_checkpoint(checkpoint_path)
+    
+    def test_load_checkpoint_missing_plan(self, temp_checkpoint_dir):
+        """Test loading checkpoint without plan data raises error."""
+        checkpoint_path = temp_checkpoint_dir / "empty.json"
+        checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
+        checkpoint_path.write_text('{"version": "1.0"}')
+        
+        with pytest.raises(ValueError, match="Checkpoint missing plan data"):
+            TaskPlan.load_checkpoint(checkpoint_path)
+    
+    def test_orchestrator_interrupt_with_checkpoint(self, temp_checkpoint_dir):
+        """Test orchestrator interrupt saves checkpoint."""
+        orchestrator = Orchestrator()
+        
+        # Create a plan
+        plan = orchestrator.create_plan("Test task")
+        
+        checkpoint_path = temp_checkpoint_dir / "checkpoint.json"
+        result = orchestrator.interrupt_with_checkpoint(checkpoint_path)
+        
+        assert result is True
+        assert checkpoint_path.exists()
+        
+        # Verify checkpoint content
+        loaded = TaskPlan.load_checkpoint(checkpoint_path)
+        assert loaded.plan_id == plan.plan_id
+    
+    def test_orchestrator_interrupt_without_plan(self, temp_checkpoint_dir):
+        """Test interrupt without active plan returns False."""
+        orchestrator = Orchestrator()
+        
+        checkpoint_path = temp_checkpoint_dir / "checkpoint.json"
+        result = orchestrator.interrupt_with_checkpoint(checkpoint_path)
+        
+        assert result is False
+        assert not checkpoint_path.exists()
+    
+    @pytest.mark.asyncio
+    async def test_orchestrator_resume(self, temp_checkpoint_dir):
+        """Test orchestrator resume from checkpoint."""
+        # Create initial orchestrator and plan
+        orchestrator1 = Orchestrator()
+        plan = TaskPlan(plan_id="plan_resume", objective="Resume test")
+        plan.add_step("Recon", AgentRole.RECON)
+        plan.add_step("Report", AgentRole.REPORTER, dependencies=["step_1"])
+        
+        # Mark step 1 complete (simulating partial execution)
+        result1 = AgentResult(success=True, output="Recon done")
+        plan.mark_step_complete("step_1", result1)
+        
+        # Save checkpoint
+        checkpoint_path = temp_checkpoint_dir / "resume_test.json"
+        plan.save_checkpoint(checkpoint_path)
+        
+        # Create new orchestrator with mocked agents
+        orchestrator2 = Orchestrator()
+        
+        # Register a mock reporter agent
+        from unittest.mock import AsyncMock, MagicMock
+        mock_reporter = MagicMock(spec=ReporterAgent)
+        mock_reporter.role = AgentRole.REPORTER
+        mock_reporter.run = AsyncMock(return_value=AgentResult(
+            success=True,
+            output="Report generated",
+        ))
+        orchestrator2.register_agent(mock_reporter)
+        
+        # Resume execution
+        result = await orchestrator2.resume(checkpoint_path)
+        
+        assert result.success is True
+        assert "Report generated" in result.output
+        assert result.data.get("resumed") is True
+        
+        # Verify reporter was called
+        mock_reporter.run.assert_called_once()
+    
+    @pytest.mark.asyncio
+    async def test_orchestrator_resume_file_not_found(self, temp_checkpoint_dir):
+        """Test resume with non-existent checkpoint raises error."""
+        orchestrator = Orchestrator()
+        
+        with pytest.raises(FileNotFoundError):
+            await orchestrator.resume(temp_checkpoint_dir / "nonexistent.json")
+    
+    def test_checkpoint_preserves_all_step_data(self, temp_checkpoint_dir):
+        """Test checkpoint preserves all step metadata."""
+        plan = TaskPlan(plan_id="plan_full", objective="Full data test")
+        step = plan.add_step("Test", AgentRole.EXPLOIT)
+        step.status = StepStatus.IN_PROGRESS
+        step.retry_count = 2
+        step.result = AgentResult(
+            success=False,
+            output="Failed attempt",
+            error="Connection timeout",
+            execution_time=5.5,
+            tokens_used=250,
+        )
+        
+        checkpoint_path = temp_checkpoint_dir / "full_data.json"
+        plan.save_checkpoint(checkpoint_path)
+        
+        loaded = TaskPlan.load_checkpoint(checkpoint_path)
+        loaded_step = loaded.get_step("step_1")
+        
+        assert loaded_step.status == StepStatus.IN_PROGRESS
+        assert loaded_step.retry_count == 2
+        assert loaded_step.result.error == "Connection timeout"
+        assert loaded_step.result.execution_time == 5.5
+        assert loaded_step.result.tokens_used == 250
