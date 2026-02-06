@@ -78,6 +78,16 @@ class CommandResult(BaseModel):
         description="Token usage information from the LLM call"
     )
     
+    thinking: Optional[str] = Field(
+        default=None,
+        description="Extended thinking content from reasoning models"
+    )
+    
+    reasoning_tokens: int = Field(
+        default=0,
+        description="Number of tokens used for reasoning/thinking"
+    )
+    
     def __str__(self) -> str:
         """String representation of the command result."""
         return f"CommandResult(command='{self.command}', risk_level='{self.risk_level}')"

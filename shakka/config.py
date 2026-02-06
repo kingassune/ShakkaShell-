@@ -215,6 +215,22 @@ class ShakkaConfig(BaseSettings):
         description="Provider for reporter agent"
     )
     
+    # Reasoning Model Configuration
+    enable_extended_thinking: bool = Field(
+        default=False,
+        description="Enable extended thinking for Claude models (uses more tokens)"
+    )
+    
+    extended_thinking_budget: int = Field(
+        default=10000,
+        description="Maximum thinking tokens for Claude extended thinking"
+    )
+    
+    o1_reasoning_effort: Literal["low", "medium", "high"] = Field(
+        default="medium",
+        description="Reasoning effort level for o1 models"
+    )
+    
     # Application Settings
     config_path: Optional[Path] = Field(
         default=None,

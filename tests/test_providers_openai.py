@@ -141,3 +141,164 @@ async def test_system_prompt_included(mock_openai_response):
         # Should have system message first
         assert messages[0]["role"] == "system"
         assert "ShakkaShell" in messages[0]["content"]
+
+
+# Tests for O1 Reasoning Model Support
+
+class TestO1ReasoningModels:
+    """Tests for O1 reasoning model support."""
+    
+    def test_is_o1_model_positive(self):
+        """Test O1 model detection for known models."""
+        from shakka.providers.openai import is_o1_model
+        
+        assert is_o1_model("o1") is True
+        assert is_o1_model("o1-mini") is True
+        assert is_o1_model("o1-preview") is True
+        assert is_o1_model("o1-2024-12-17") is True
+    
+    def test_is_o1_model_negative(self):
+        """Test O1 model detection for non-O1 models."""
+        from shakka.providers.openai import is_o1_model
+        
+        assert is_o1_model("gpt-4") is False
+        assert is_o1_model("gpt-3.5-turbo") is False
+        assert is_o1_model("claude-3-opus") is False
+    
+    def test_provider_is_reasoning_model_property(self):
+        """Test is_reasoning_model property."""
+        o1_provider = OpenAIProvider(model="o1")
+        gpt_provider = OpenAIProvider(model="gpt-4")
+        
+        assert o1_provider.is_reasoning_model is True
+        assert gpt_provider.is_reasoning_model is False
+    
+    def test_reasoning_effort_default(self):
+        """Test default reasoning effort."""
+        provider = OpenAIProvider(model="o1")
+        assert provider.reasoning_effort == "medium"
+    
+    def test_reasoning_effort_custom(self):
+        """Test custom reasoning effort."""
+        provider = OpenAIProvider(model="o1", reasoning_effort="high")
+        assert provider.reasoning_effort == "high"
+    
+    @pytest.mark.asyncio
+    async def test_o1_model_no_system_message(self):
+        """Test that O1 models combine system prompt into user message."""
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message.content = json.dumps({
+            "command": "nmap -sV 10.0.0.1",
+            "explanation": "Scan",
+            "risk_level": "Medium",
+        })
+        mock_response.choices[0].message.reasoning_content = None
+        mock_response.usage = None
+        
+        provider = OpenAIProvider(api_key="test-key", model="o1")
+        
+        with patch("shakka.providers.openai.acompletion", return_value=mock_response) as mock_call:
+            await provider.generate("scan ports")
+            
+            call_args = mock_call.call_args
+            messages = call_args[1]["messages"]
+            
+            # O1 should have only user message with system prompt embedded
+            assert len(messages) == 1
+            assert messages[0]["role"] == "user"
+            assert "ShakkaShell" in messages[0]["content"]
+    
+    @pytest.mark.asyncio
+    async def test_o1_model_reasoning_effort_passed(self):
+        """Test that reasoning effort is passed to API."""
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message.content = json.dumps({
+            "command": "nmap -sV 10.0.0.1",
+            "explanation": "Scan",
+            "risk_level": "Medium",
+        })
+        mock_response.choices[0].message.reasoning_content = None
+        mock_response.usage = None
+        
+        provider = OpenAIProvider(api_key="test-key", model="o1", reasoning_effort="high")
+        
+        with patch("shakka.providers.openai.acompletion", return_value=mock_response) as mock_call:
+            await provider.generate("scan ports")
+            
+            call_args = mock_call.call_args
+            
+            # Should pass reasoning_effort
+            assert call_args[1]["reasoning_effort"] == "high"
+            # Should not pass temperature or response_format
+            assert "temperature" not in call_args[1]
+    
+    @pytest.mark.asyncio
+    async def test_o1_model_reasoning_tokens_tracked(self):
+        """Test that reasoning tokens are tracked."""
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message.content = json.dumps({
+            "command": "nmap -sV 10.0.0.1",
+            "explanation": "Scan",
+            "risk_level": "Medium",
+        })
+        mock_response.choices[0].message.reasoning_content = None
+        
+        # Mock usage with reasoning tokens
+        mock_usage = MagicMock()
+        mock_details = MagicMock()
+        mock_details.reasoning_tokens = 500
+        mock_usage.completion_tokens_details = mock_details
+        mock_response.usage = mock_usage
+        
+        provider = OpenAIProvider(api_key="test-key", model="o1")
+        
+        with patch("shakka.providers.openai.acompletion", return_value=mock_response):
+            result = await provider.generate("scan ports")
+            
+            assert result.reasoning_tokens == 500
+    
+    @pytest.mark.asyncio
+    async def test_o1_model_reasoning_content_captured(self):
+        """Test that reasoning content is captured when available."""
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message.content = json.dumps({
+            "command": "nmap -sV 10.0.0.1",
+            "explanation": "Scan",
+            "risk_level": "Medium",
+        })
+        mock_response.choices[0].message.reasoning_content = "Thinking about the best scan approach..."
+        mock_response.usage = None
+        
+        provider = OpenAIProvider(api_key="test-key", model="o1")
+        
+        with patch("shakka.providers.openai.acompletion", return_value=mock_response):
+            result = await provider.generate("scan ports")
+            
+            assert result.thinking == "Thinking about the best scan approach..."
+            assert provider.last_reasoning_content == "Thinking about the best scan approach..."
+    
+    @pytest.mark.asyncio
+    async def test_o1_model_json_in_markdown(self):
+        """Test O1 model response with JSON wrapped in markdown."""
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message.content = """```json
+{
+    "command": "nmap -sV 10.0.0.1",
+    "explanation": "Scan ports",
+    "risk_level": "Medium"
+}
+```"""
+        mock_response.choices[0].message.reasoning_content = None
+        mock_response.usage = None
+        
+        provider = OpenAIProvider(api_key="test-key", model="o1")
+        
+        with patch("shakka.providers.openai.acompletion", return_value=mock_response):
+            result = await provider.generate("scan ports")
+            
+            assert result.command == "nmap -sV 10.0.0.1"

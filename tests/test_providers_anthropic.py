@@ -144,3 +144,179 @@ async def test_validate_connection_failure():
     with patch("shakka.providers.anthropic.acompletion", side_effect=Exception("Auth failed")):
         is_valid = await provider.validate_connection()
         assert is_valid is False
+
+
+# Tests for Extended Thinking Support
+
+class TestExtendedThinking:
+    """Tests for Claude extended thinking support."""
+    
+    def test_model_supports_extended_thinking(self):
+        """Test extended thinking model detection."""
+        from shakka.providers.anthropic import model_supports_extended_thinking
+        
+        # Models that support extended thinking
+        assert model_supports_extended_thinking("claude-3-5-sonnet-20241022") is True
+        assert model_supports_extended_thinking("claude-3-5-sonnet") is True
+        assert model_supports_extended_thinking("claude-sonnet-4-20250514") is True
+        assert model_supports_extended_thinking("claude-4") is True
+        
+        # Models that don't support extended thinking
+        assert model_supports_extended_thinking("claude-3-sonnet-20240229") is False
+        assert model_supports_extended_thinking("claude-3-opus") is False
+        assert model_supports_extended_thinking("gpt-4") is False
+    
+    def test_provider_init_with_extended_thinking(self):
+        """Test provider initialization with extended thinking options."""
+        provider = AnthropicProvider(
+            api_key="test-key",
+            model="claude-3-5-sonnet-20241022",
+            enable_extended_thinking=True,
+            thinking_budget=5000,
+        )
+        
+        assert provider.enable_extended_thinking is True
+        assert provider.thinking_budget == 5000
+    
+    def test_provider_init_default_thinking_disabled(self):
+        """Test extended thinking is disabled by default."""
+        provider = AnthropicProvider(api_key="test-key")
+        
+        assert provider.enable_extended_thinking is False
+        assert provider.thinking_budget == 10000  # Default
+    
+    def test_last_thinking_content_initially_none(self):
+        """Test last_thinking_content starts as None."""
+        provider = AnthropicProvider(api_key="test-key")
+        assert provider.last_thinking_content is None
+    
+    @pytest.mark.asyncio
+    async def test_extended_thinking_uses_temperature_1(self):
+        """Test that extended thinking uses temperature=1."""
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message.content = json.dumps({
+            "command": "nmap -sV 10.0.0.1",
+            "explanation": "Scan",
+            "risk_level": "Medium",
+        })
+        mock_response.choices[0].message.thinking = None
+        mock_response.choices[0].message.reasoning_content = None
+        
+        provider = AnthropicProvider(
+            api_key="test-key",
+            model="claude-3-5-sonnet-20241022",
+            enable_extended_thinking=True,
+        )
+        
+        with patch("shakka.providers.anthropic.acompletion", return_value=mock_response) as mock_call:
+            await provider.generate("scan ports")
+            
+            call_args = mock_call.call_args
+            assert call_args[1]["temperature"] == 1.0
+    
+    @pytest.mark.asyncio
+    async def test_extended_thinking_passes_thinking_param(self):
+        """Test that thinking parameter is passed to API."""
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message.content = json.dumps({
+            "command": "nmap -sV 10.0.0.1",
+            "explanation": "Scan",
+            "risk_level": "Medium",
+        })
+        mock_response.choices[0].message.thinking = None
+        mock_response.choices[0].message.reasoning_content = None
+        
+        provider = AnthropicProvider(
+            api_key="test-key",
+            model="claude-3-5-sonnet-20241022",
+            enable_extended_thinking=True,
+            thinking_budget=8000,
+        )
+        
+        with patch("shakka.providers.anthropic.acompletion", return_value=mock_response) as mock_call:
+            await provider.generate("scan ports")
+            
+            call_args = mock_call.call_args
+            assert call_args[1]["thinking"] == {
+                "type": "enabled",
+                "budget_tokens": 8000,
+            }
+    
+    @pytest.mark.asyncio
+    async def test_extended_thinking_unsupported_model_ignored(self):
+        """Test that extended thinking is ignored for unsupported models."""
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message.content = json.dumps({
+            "command": "nmap -sV 10.0.0.1",
+            "explanation": "Scan",
+            "risk_level": "Medium",
+        })
+        mock_response.choices[0].message.thinking = None
+        mock_response.choices[0].message.reasoning_content = None
+        
+        # Using older model that doesn't support extended thinking
+        provider = AnthropicProvider(
+            api_key="test-key",
+            model="claude-3-sonnet-20240229",
+            enable_extended_thinking=True,  # Enabled but model doesn't support
+        )
+        
+        with patch("shakka.providers.anthropic.acompletion", return_value=mock_response) as mock_call:
+            await provider.generate("scan ports")
+            
+            call_args = mock_call.call_args
+            # Should use normal temperature, not extended thinking
+            assert call_args[1]["temperature"] == 0.1
+            assert "thinking" not in call_args[1]
+    
+    @pytest.mark.asyncio
+    async def test_thinking_content_captured(self):
+        """Test that thinking content is captured from response."""
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message.content = json.dumps({
+            "command": "nmap -sV 10.0.0.1",
+            "explanation": "Scan",
+            "risk_level": "Medium",
+        })
+        mock_response.choices[0].message.thinking = "Let me think about this..."
+        mock_response.choices[0].message.reasoning_content = None
+        
+        provider = AnthropicProvider(
+            api_key="test-key",
+            model="claude-3-5-sonnet-20241022",
+            enable_extended_thinking=True,
+        )
+        
+        with patch("shakka.providers.anthropic.acompletion", return_value=mock_response):
+            result = await provider.generate("scan ports")
+            
+            assert result.thinking == "Let me think about this..."
+            assert provider.last_thinking_content == "Let me think about this..."
+    
+    @pytest.mark.asyncio
+    async def test_reasoning_content_captured(self):
+        """Test that reasoning_content is captured as thinking."""
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message.content = json.dumps({
+            "command": "nmap -sV 10.0.0.1",
+            "explanation": "Scan",
+            "risk_level": "Medium",
+        })
+        mock_response.choices[0].message.thinking = None
+        mock_response.choices[0].message.reasoning_content = "Analyzing the target..."
+        
+        provider = AnthropicProvider(
+            api_key="test-key",
+            model="claude-3-5-sonnet-20241022",
+            enable_extended_thinking=True,
+        )
+        
+        with patch("shakka.providers.anthropic.acompletion", return_value=mock_response):
+            result = await provider.generate("scan ports")
+            
+            assert result.thinking == "Analyzing the target..."

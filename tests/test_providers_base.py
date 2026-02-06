@@ -142,3 +142,49 @@ def test_command_result_empty_string_validation():
             explanation="",
             risk_level="Low"
         )
+
+
+def test_command_result_thinking_field():
+    """Test CommandResult thinking field for reasoning models."""
+    result = CommandResult(
+        command="nmap -sV 10.0.0.1",
+        explanation="Port scan",
+        risk_level="Low",
+        thinking="I analyzed the request and determined nmap is best...",
+    )
+    
+    assert result.thinking == "I analyzed the request and determined nmap is best..."
+
+
+def test_command_result_thinking_default_none():
+    """Test that thinking defaults to None."""
+    result = CommandResult(
+        command="nmap 10.0.0.1",
+        explanation="Port scan",
+        risk_level="Low",
+    )
+    
+    assert result.thinking is None
+
+
+def test_command_result_reasoning_tokens():
+    """Test CommandResult reasoning_tokens field."""
+    result = CommandResult(
+        command="nmap -sV 10.0.0.1",
+        explanation="Port scan",
+        risk_level="Low",
+        reasoning_tokens=500,
+    )
+    
+    assert result.reasoning_tokens == 500
+
+
+def test_command_result_reasoning_tokens_default():
+    """Test that reasoning_tokens defaults to 0."""
+    result = CommandResult(
+        command="nmap 10.0.0.1",
+        explanation="Port scan",
+        risk_level="Low",
+    )
+    
+    assert result.reasoning_tokens == 0

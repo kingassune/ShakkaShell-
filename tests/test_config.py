@@ -267,3 +267,57 @@ class TestAgentModelConfig:
         assert hasattr(config, 'agent_exploit_provider')
         assert hasattr(config, 'agent_persistence_provider')
         assert hasattr(config, 'agent_reporter_provider')
+
+
+class TestReasoningModelConfig:
+    """Tests for reasoning model configuration."""
+    
+    def test_extended_thinking_defaults(self):
+        """Test extended thinking default values."""
+        config = ShakkaConfig()
+        
+        assert config.enable_extended_thinking is False
+        assert config.extended_thinking_budget == 10000
+        assert config.o1_reasoning_effort == "medium"
+    
+    def test_extended_thinking_enabled(self):
+        """Test enabling extended thinking."""
+        config = ShakkaConfig(enable_extended_thinking=True)
+        
+        assert config.enable_extended_thinking is True
+    
+    def test_extended_thinking_budget_custom(self):
+        """Test custom thinking budget."""
+        config = ShakkaConfig(extended_thinking_budget=5000)
+        
+        assert config.extended_thinking_budget == 5000
+    
+    def test_o1_reasoning_effort_values(self):
+        """Test valid reasoning effort values."""
+        config_low = ShakkaConfig(o1_reasoning_effort="low")
+        config_medium = ShakkaConfig(o1_reasoning_effort="medium")
+        config_high = ShakkaConfig(o1_reasoning_effort="high")
+        
+        assert config_low.o1_reasoning_effort == "low"
+        assert config_medium.o1_reasoning_effort == "medium"
+        assert config_high.o1_reasoning_effort == "high"
+    
+    def test_reasoning_config_from_env(self, monkeypatch):
+        """Test reasoning config from environment variables."""
+        monkeypatch.setenv("SHAKKA_ENABLE_EXTENDED_THINKING", "true")
+        monkeypatch.setenv("SHAKKA_EXTENDED_THINKING_BUDGET", "8000")
+        monkeypatch.setenv("SHAKKA_O1_REASONING_EFFORT", "high")
+        
+        config = ShakkaConfig()
+        
+        assert config.enable_extended_thinking is True
+        assert config.extended_thinking_budget == 8000
+        assert config.o1_reasoning_effort == "high"
+    
+    def test_reasoning_config_fields_exist(self):
+        """Test all reasoning config fields exist."""
+        config = ShakkaConfig()
+        
+        assert hasattr(config, 'enable_extended_thinking')
+        assert hasattr(config, 'extended_thinking_budget')
+        assert hasattr(config, 'o1_reasoning_effort')
