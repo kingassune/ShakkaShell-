@@ -1,6 +1,7 @@
 """Tests for the multi-agent orchestration module."""
 
 import pytest
+from unittest.mock import AsyncMock, patch
 
 from shakka.agents.base import Agent, AgentConfig, AgentResult, AgentRole, AgentState
 from shakka.agents.message import AgentMessage, MessageQueue, MessageType
@@ -517,18 +518,37 @@ class TestReconAgent:
     @pytest.mark.asyncio
     async def test_execute(self, agent):
         """Test agent execution."""
-        result = await agent.run("Scan target network")
+        # Mock the LLM response with proper JSON for recon
+        mock_response = '''{
+            "target": "target network",
+            "methodology": "network scan",
+            "findings": {
+                "open_ports": [22, 80, 443],
+                "services": [{"port": 80, "service": "http", "version": "2.4"}],
+                "hostnames": ["example.com"],
+                "vulnerabilities": ["potential XSS"],
+                "notes": "Additional findings"
+            },
+            "commands_to_run": ["nmap -sV target"],
+            "summary": "Scan complete"
+        }'''
         
-        assert result.success is True
-        assert "Reconnaissance completed" in result.output
-        assert "open_ports" in result.data
+        with patch.object(agent, '_call_llm', return_value=mock_response):
+            result = await agent.run("Scan target network")
+            
+            assert result.success is True
+            assert "Reconnaissance completed" in result.output
+            assert "open_ports" in result.data.get("findings", {})
     
     @pytest.mark.asyncio
     async def test_state_transitions(self, agent):
         """Test state transitions during execution."""
         assert agent.state == AgentState.IDLE
         
-        await agent.run("Test task")
+        mock_response = '{"target": "test", "methodology": "test", "findings": {}, "commands_to_run": [], "summary": "done"}'
+        
+        with patch.object(agent, '_call_llm', return_value=mock_response):
+            await agent.run("Test task")
         
         assert agent.state == AgentState.COMPLETED
 
@@ -548,10 +568,21 @@ class TestExploitAgent:
     @pytest.mark.asyncio
     async def test_execute(self, agent):
         """Test agent execution."""
-        result = await agent.run("Analyze vulnerabilities")
+        mock_response = '''{
+            "vulnerability_assessment": [{"type": "RCE", "severity": "high"}],
+            "recommended_exploits": [{"name": "test", "source": "metasploit"}],
+            "attack_chain": ["step 1"],
+            "payloads": [],
+            "prerequisites": [],
+            "evasion_tips": [],
+            "summary": "Exploitation analysis complete"
+        }'''
         
-        assert result.success is True
-        assert "Exploitation analysis" in result.output
+        with patch.object(agent, '_call_llm', return_value=mock_response):
+            result = await agent.run("Analyze vulnerabilities")
+            
+            assert result.success is True
+            assert "Exploitation analysis" in result.output
 
 
 class TestPersistenceAgent:
@@ -569,10 +600,19 @@ class TestPersistenceAgent:
     @pytest.mark.asyncio
     async def test_execute(self, agent):
         """Test agent execution."""
-        result = await agent.run("Establish persistence")
+        mock_response = '''{
+            "techniques": [{"name": "cron job", "mitre_id": "T1053"}],
+            "lateral_movement": [],
+            "privilege_escalation": [],
+            "cleanup_plan": [],
+            "summary": "Persistence established"
+        }'''
         
-        assert result.success is True
-        assert "techniques" in result.data
+        with patch.object(agent, '_call_llm', return_value=mock_response):
+            result = await agent.run("Establish persistence")
+            
+            assert result.success is True
+            assert "techniques" in result.data
 
 
 class TestReporterAgent:
@@ -590,10 +630,22 @@ class TestReporterAgent:
     @pytest.mark.asyncio
     async def test_execute(self, agent):
         """Test agent execution."""
-        result = await agent.run("Generate report")
+        mock_response = '''{
+            "report": {
+                "executive_summary": "Test summary",
+                "findings": [],
+                "recommendations": [],
+                "timeline": []
+            },
+            "format": "markdown",
+            "summary": "Report generated"
+        }'''
         
-        assert result.success is True
-        assert "report" in result.data
+        with patch.object(agent, '_call_llm', return_value=mock_response):
+            result = await agent.run("Generate report")
+            
+            assert result.success is True
+            assert "report" in result.data
 
 
 class TestOrchestrator:
@@ -642,16 +694,28 @@ class TestOrchestrator:
     @pytest.mark.asyncio
     async def test_orchestrate(self, orchestrator):
         """Test full orchestration."""
+        recon_agent = ReconAgent()
+        exploit_agent = ExploitAgent()
+        reporter_agent = ReporterAgent()
+        
         agents = {
-            AgentRole.RECON: ReconAgent(),
-            AgentRole.EXPLOIT: ExploitAgent(),
-            AgentRole.REPORTER: ReporterAgent(),
+            AgentRole.RECON: recon_agent,
+            AgentRole.EXPLOIT: exploit_agent,
+            AgentRole.REPORTER: reporter_agent,
         }
         
-        result = await orchestrator.orchestrate(
-            "Scan and assess target",
-            agents=agents,
-        )
+        # Mock LLM responses for all agents
+        mock_recon = '{"target": "test", "methodology": "scan", "findings": {"open_ports": [80]}, "commands_to_run": [], "summary": "done"}'
+        mock_exploit = '{"vulnerability_assessment": [], "recommended_exploits": [], "attack_chain": [], "payloads": [], "prerequisites": [], "evasion_tips": [], "summary": "done"}'
+        mock_report = '{"report": {"executive_summary": "test"}, "format": "md", "summary": "done"}'
+        
+        with patch.object(recon_agent, '_call_llm', return_value=mock_recon):
+            with patch.object(exploit_agent, '_call_llm', return_value=mock_exploit):
+                with patch.object(reporter_agent, '_call_llm', return_value=mock_report):
+                    result = await orchestrator.orchestrate(
+                        "Scan and assess target",
+                        agents=agents,
+                    )
         
         assert result.success is True
         assert "plan" in result.data
@@ -660,9 +724,13 @@ class TestOrchestrator:
     async def test_orchestrate_handles_missing_agent(self, orchestrator):
         """Test orchestration handles missing agents gracefully."""
         # Only register recon, but plan may need others
-        orchestrator.register_agent(ReconAgent())
+        recon_agent = ReconAgent()
+        orchestrator.register_agent(recon_agent)
         
-        result = await orchestrator.run("Scan target")
+        mock_response = '{"target": "test", "methodology": "scan", "findings": {}, "commands_to_run": [], "summary": "done"}'
+        
+        with patch.object(recon_agent, '_call_llm', return_value=mock_response):
+            result = await orchestrator.run("Scan target")
         
         # Should not crash, but may have incomplete results
         assert result is not None

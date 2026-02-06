@@ -32,7 +32,7 @@ class ShakkaConfig(BaseSettings):
     )
     
     # LLM Provider Settings
-    default_provider: Literal["openai", "anthropic", "ollama"] = Field(
+    default_provider: Literal["openai", "anthropic", "ollama", "openrouter"] = Field(
         default="openai",
         description="Default LLM provider to use"
     )
@@ -61,6 +61,25 @@ class ShakkaConfig(BaseSettings):
     ollama_model: str = Field(
         default="llama2",
         description="Ollama model name to use"
+    )
+    
+    # OpenRouter Configuration (unified API for many models at low cost)
+    openrouter_api_key: Optional[str] = Field(
+        default=None,
+        description="OpenRouter API key",
+        validation_alias=AliasChoices(
+            "openrouter_api_key", "SHAKKA_OPENROUTER_API_KEY", "OPENROUTER_API_KEY"
+        ),
+    )
+    
+    openrouter_model: str = Field(
+        default="deepseek/deepseek-chat",
+        description="OpenRouter model (e.g., 'openai/gpt-4o-mini', 'deepseek/deepseek-chat')"
+    )
+    
+    openrouter_site_url: Optional[str] = Field(
+        default=None,
+        description="Your site URL for OpenRouter rankings"
     )
     
     # Fallback Configuration

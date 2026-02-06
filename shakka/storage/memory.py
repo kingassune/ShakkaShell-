@@ -99,7 +99,7 @@ class MemoryConfig:
     max_per_target: int = 1000
     
     # Recall settings
-    default_similarity_threshold: float = 0.7
+    default_similarity_threshold: float = 0.2
     default_recall_limit: int = 10
     
     # Embedding settings
@@ -130,7 +130,7 @@ class MemoryBackend(ABC):
         memory_type: Optional[MemoryType] = None,
         target: Optional[str] = None,
         limit: int = 10,
-        similarity_threshold: float = 0.7,
+        similarity_threshold: float = 0.2,
     ) -> list[MemoryEntry]:
         """Recall memories matching the query."""
         pass
@@ -255,7 +255,7 @@ class JSONMemoryBackend(MemoryBackend):
         memory_type: Optional[MemoryType] = None,
         target: Optional[str] = None,
         limit: int = 10,
-        similarity_threshold: float = 0.7,
+        similarity_threshold: float = 0.2,
     ) -> list[MemoryEntry]:
         """Recall memories matching the query using keyword matching."""
         results: list[tuple[float, MemoryEntry]] = []
@@ -434,7 +434,7 @@ class VectorMemoryBackend(MemoryBackend):
         memory_type: Optional[MemoryType] = None,
         target: Optional[str] = None,
         limit: int = 10,
-        similarity_threshold: float = 0.7,
+        similarity_threshold: float = 0.2,
     ) -> list[MemoryEntry]:
         """Recall memories using semantic search."""
         if not self._available:

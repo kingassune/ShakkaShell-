@@ -8,7 +8,7 @@ packages = [{include = "shakka"}]
 
 [tool.poetry.dependencies]
 python = "^3.11"
-typer = "^0.9.0"
+typer = ">=0.9.0"
 rich = "^13.0"
 litellm = "^1.0"
 pydantic-settings = "^2.0"

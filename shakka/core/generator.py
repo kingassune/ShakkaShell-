@@ -33,7 +33,7 @@ class CommandGenerator:
         """Get or create LLM provider instance.
         
         Args:
-            provider_name: Provider name (openai, anthropic, ollama).
+            provider_name: Provider name (openai, anthropic, ollama, openrouter).
                           If None, uses default from config.
         
         Returns:
@@ -77,10 +77,25 @@ class CommandGenerator:
                 model=self.config.ollama_model
             )
         
+        elif provider_name == "openrouter":
+            api_key = self.config.openrouter_api_key
+            if not api_key:
+                raise ValueError(
+                    "OpenRouter API key not found. "
+                    "Set OPENROUTER_API_KEY environment variable or configure in settings."
+                )
+            # Import here to avoid dependency if not used
+            from shakka.providers.openrouter import OpenRouterProvider
+            provider = OpenRouterProvider(
+                api_key=api_key,
+                model=self.config.openrouter_model,
+                site_url=self.config.openrouter_site_url
+            )
+        
         else:
             raise ValueError(
                 f"Unknown provider: {provider_name}. "
-                f"Valid options: openai, anthropic, ollama"
+                f"Valid options: openai, anthropic, ollama, openrouter"
             )
 
         self._provider = provider
@@ -265,6 +280,7 @@ class CommandGenerator:
             "openai": lambda: bool(self.config.openai_api_key),
             "anthropic": lambda: bool(self.config.anthropic_api_key),
             "ollama": lambda: True,
+            "openrouter": lambda: bool(self.config.openrouter_api_key),
         }
 
     def get_cost_summary(self) -> dict:

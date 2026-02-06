@@ -3,8 +3,13 @@
 Generates attack plans with visible AI reasoning using reasoning models.
 """
 
+import json
+import re
 from dataclasses import dataclass, field
 from typing import Optional
+
+from shakka.config import ShakkaConfig
+from shakka.providers.base import LLMProvider
 
 from .models import (
     AttackPlan,
@@ -27,6 +32,8 @@ class PlannerConfig:
         include_risk_assessment: Whether to assess risk per step.
         include_detection_notes: Whether to add detection information.
         verbose_thinking: Whether to show detailed reasoning.
+        use_llm: Whether to use LLM for dynamic plan generation.
+        provider: LLM provider to use (openai, anthropic, ollama, openrouter).
     """
     
     model: str = "claude-3-5-sonnet-20241022"
@@ -35,6 +42,8 @@ class PlannerConfig:
     include_risk_assessment: bool = True
     include_detection_notes: bool = True
     verbose_thinking: bool = True
+    use_llm: bool = True
+    provider: Optional[str] = None  # Uses default from config if None
     
     def to_dict(self) -> dict:
         """Convert to dictionary."""
@@ -45,6 +54,8 @@ class PlannerConfig:
             "include_risk_assessment": self.include_risk_assessment,
             "include_detection_notes": self.include_detection_notes,
             "verbose_thinking": self.verbose_thinking,
+            "use_llm": self.use_llm,
+            "provider": self.provider,
         }
 
 
@@ -78,14 +89,61 @@ Be thorough but realistic. Consider:
 - Potential obstacles and mitigations
 """
     
-    def __init__(self, config: Optional[PlannerConfig] = None):
+    def __init__(
+        self,
+        config: Optional[PlannerConfig] = None,
+        shakka_config: Optional[ShakkaConfig] = None,
+    ):
         """Initialize the planner.
         
         Args:
             config: Optional planner configuration.
+            shakka_config: Optional ShakkaConfig for provider settings.
         """
         self.config = config or PlannerConfig()
+        self.shakka_config = shakka_config or ShakkaConfig()
         self._cache: dict[str, AttackPlan] = {}
+        self._provider: Optional[LLMProvider] = None
+    
+    def _get_provider(self) -> LLMProvider:
+        """Get or create the LLM provider for plan generation."""
+        if self._provider:
+            return self._provider
+        
+        provider_name = self.config.provider or self.shakka_config.default_provider
+        
+        if provider_name == "openai":
+            from shakka.providers.openai import OpenAIProvider
+            api_key = self.shakka_config.openai_api_key
+            if not api_key:
+                raise ValueError("OpenAI API key not found.")
+            self._provider = OpenAIProvider(api_key=api_key)
+        elif provider_name == "anthropic":
+            from shakka.providers.anthropic import AnthropicProvider
+            api_key = self.shakka_config.anthropic_api_key
+            if not api_key:
+                raise ValueError("Anthropic API key not found.")
+            self._provider = AnthropicProvider(api_key=api_key)
+        elif provider_name == "ollama":
+            from shakka.providers.ollama import OllamaProvider
+            self._provider = OllamaProvider(
+                base_url=self.shakka_config.ollama_base_url,
+                model=self.shakka_config.ollama_model
+            )
+        elif provider_name == "openrouter":
+            from shakka.providers.openrouter import OpenRouterProvider
+            api_key = self.shakka_config.openrouter_api_key
+            if not api_key:
+                raise ValueError("OpenRouter API key not found.")
+            self._provider = OpenRouterProvider(
+                api_key=api_key,
+                model=self.shakka_config.openrouter_model,
+                site_url=self.shakka_config.openrouter_site_url
+            )
+        else:
+            raise ValueError(f"Unknown provider: {provider_name}")
+        
+        return self._provider
     
     async def plan(
         self,
@@ -129,8 +187,8 @@ Be thorough but realistic. Consider:
     ) -> AttackPlan:
         """Generate the attack plan.
         
-        In production, this calls an LLM with reasoning capabilities.
-        For testing, returns a simulated plan.
+        Uses LLM for dynamic plan generation when use_llm is True,
+        otherwise falls back to template-based plans.
         
         Args:
             objective: Attack objective.
@@ -140,10 +198,17 @@ Be thorough but realistic. Consider:
         Returns:
             Generated attack plan.
         """
-        # Analyze the objective to determine attack type
+        # Try LLM-based generation if enabled
+        if self.config.use_llm:
+            try:
+                return await self._generate_llm_plan(objective, current_position, context)
+            except Exception as e:
+                # Fall back to template-based plan on error
+                pass
+        
+        # Template-based fallback
         plan_type = self._categorize_objective(objective)
         
-        # Generate appropriate plan based on type
         if plan_type == "domain_admin":
             return self._generate_domain_admin_plan(objective, current_position)
         elif plan_type == "web_app":
@@ -152,6 +217,182 @@ Be thorough but realistic. Consider:
             return self._generate_network_plan(objective, current_position)
         else:
             return self._generate_generic_plan(objective, current_position)
+    
+    async def _generate_llm_plan(
+        self,
+        objective: str,
+        current_position: str,
+        context: Optional[dict],
+    ) -> AttackPlan:
+        """Generate attack plan using LLM with reasoning.
+        
+        Args:
+            objective: Attack objective.
+            current_position: Current position/access level.
+            context: Additional context.
+            
+        Returns:
+            LLM-generated attack plan.
+        """
+        provider = self._get_provider()
+        
+        # Build context-aware prompt
+        prompt = f"""Create a detailed penetration testing attack plan for the following objective:
+
+OBJECTIVE: {objective}
+
+{f'CURRENT POSITION: {current_position}' if current_position else ''}
+{f'ADDITIONAL CONTEXT: {json.dumps(context)}' if context else ''}
+
+Generate a comprehensive attack plan with:
+1. Your reasoning process (step-by-step thinking)
+2. Attack phases (Initial Access, Discovery, Privilege Escalation, etc.)
+3. Specific techniques and commands for each step
+4. MITRE ATT&CK technique IDs where applicable
+5. Risk assessment for each action
+6. Alternative approaches if primary fails
+7. Detection indicators and evasion tips
+
+Structure your response as JSON with this format:
+{{
+  "thinking": "Your step-by-step reasoning...",
+  "phases": [
+    {{
+      "phase": "INITIAL_ACCESS|DISCOVERY|PRIVILEGE_ESCALATION|CREDENTIAL_ACCESS|LATERAL_MOVEMENT|EXFILTRATION|PERSISTENCE",
+      "title": "Step title",
+      "goal": "What this step achieves",
+      "reasoning": "Why this approach",
+      "actions": [
+        {{
+          "description": "Action description",
+          "command": "Actual command (optional)",
+          "tool": "Tool name",
+          "technique_id": "TXXXX (optional)"
+        }}
+      ],
+      "risk_level": "LOW|MEDIUM|HIGH|CRITICAL",
+      "risk_factors": ["factor1", "factor2"],
+      "detection_notes": "What might trigger alerts",
+      "alternatives": [
+        {{
+          "condition": "When to use this alternative",
+          "description": "Alternative approach",
+          "actions": []
+        }}
+      ]
+    }}
+  ]
+}}
+
+Be specific with commands. Use real tools (nmap, impacket, mimikatz, etc.)."""
+        
+        # Generate using LLM
+        result = await provider.generate(prompt)
+        
+        if not result.success or not result.command:
+            raise ValueError(f"LLM generation failed: {result.error}")
+        
+        # Parse LLM response
+        return self._parse_llm_response(objective, result.command)
+    
+    def _parse_llm_response(self, objective: str, response: str) -> AttackPlan:
+        """Parse LLM JSON response into AttackPlan.
+        
+        Args:
+            objective: Original objective.
+            response: LLM response text (should be JSON).
+            
+        Returns:
+            Parsed AttackPlan.
+        """
+        # Try to extract JSON from response
+        try:
+            # Handle markdown code blocks
+            if "```json" in response:
+                json_match = re.search(r"```json\s*(.*?)\s*```", response, re.DOTALL)
+                if json_match:
+                    response = json_match.group(1)
+            elif "```" in response:
+                json_match = re.search(r"```\s*(.*?)\s*```", response, re.DOTALL)
+                if json_match:
+                    response = json_match.group(1)
+            
+            data = json.loads(response)
+        except json.JSONDecodeError:
+            # If not valid JSON, create plan from raw text
+            return AttackPlan(
+                objective=objective,
+                thinking=response[:500],
+                steps=[
+                    AttackStep(
+                        phase=PlanPhase.INITIAL_ACCESS,
+                        title="Generated Plan",
+                        goal=objective,
+                        reasoning="See thinking for details",
+                        actions=[StepAction(description=response[:1000])],
+                    )
+                ],
+            )
+        
+        # Parse phases into steps
+        steps = []
+        for phase_data in data.get("phases", []):
+            # Parse phase enum
+            phase_name = phase_data.get("phase", "INITIAL_ACCESS").upper()
+            try:
+                phase = PlanPhase[phase_name]
+            except KeyError:
+                phase = PlanPhase.INITIAL_ACCESS
+            
+            # Parse risk level
+            risk_name = phase_data.get("risk_level", "MEDIUM").upper()
+            try:
+                risk_level = RiskLevel[risk_name]
+            except KeyError:
+                risk_level = RiskLevel.MEDIUM
+            
+            # Parse actions
+            actions = []
+            for action_data in phase_data.get("actions", []):
+                actions.append(StepAction(
+                    description=action_data.get("description", ""),
+                    command=action_data.get("command"),
+                    tool=action_data.get("tool"),
+                    technique_id=action_data.get("technique_id"),
+                ))
+            
+            # Parse alternatives
+            alternatives = []
+            for alt_data in phase_data.get("alternatives", []):
+                alt_actions = []
+                for a in alt_data.get("actions", []):
+                    alt_actions.append(StepAction(
+                        description=a.get("description", "") if isinstance(a, dict) else str(a),
+                        command=a.get("command") if isinstance(a, dict) else None,
+                    ))
+                alternatives.append(AlternativePath(
+                    condition=alt_data.get("condition", ""),
+                    description=alt_data.get("description", ""),
+                    actions=alt_actions,
+                ))
+            
+            steps.append(AttackStep(
+                phase=phase,
+                title=phase_data.get("title", ""),
+                goal=phase_data.get("goal", ""),
+                reasoning=phase_data.get("reasoning", ""),
+                actions=actions,
+                alternatives=alternatives,
+                risk_level=risk_level,
+                risk_factors=phase_data.get("risk_factors", []),
+                detection_notes=phase_data.get("detection_notes", ""),
+            ))
+        
+        return AttackPlan(
+            objective=objective,
+            thinking=data.get("thinking", ""),
+            steps=steps,
+        )
     
     def _categorize_objective(self, objective: str) -> str:
         """Categorize the attack objective.

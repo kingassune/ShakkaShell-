@@ -30,6 +30,20 @@ PROVIDER_PRICING = {
         # Local models are free
         "default": {"input": 0.0, "output": 0.0},
     },
+    "openrouter": {
+        # OpenRouter pricing varies by model - these are popular options
+        # Free tier models
+        "meta-llama/llama-3.1-8b-instruct:free": {"input": 0.0, "output": 0.0},
+        "mistralai/mistral-7b-instruct:free": {"input": 0.0, "output": 0.0},
+        # Cost-effective models
+        "google/gemini-2.0-flash-001": {"input": 0.0001, "output": 0.0004},
+        "deepseek/deepseek-chat": {"input": 0.00014, "output": 0.00028},
+        "openai/gpt-4o-mini": {"input": 0.00015, "output": 0.0006},
+        "anthropic/claude-3.5-haiku": {"input": 0.001, "output": 0.005},
+        "anthropic/claude-3.5-sonnet": {"input": 0.003, "output": 0.015},
+        "openai/gpt-4o": {"input": 0.0025, "output": 0.01},
+        "default": {"input": 0.001, "output": 0.002},  # Conservative estimate
+    },
 }
 
 
@@ -111,7 +125,7 @@ class CostTracker:
         """Record token usage from an LLM call.
         
         Args:
-            provider: Provider name (openai, anthropic, ollama).
+            provider: Provider name (openai, anthropic, ollama, openrouter).
             model: Model name used.
             input_tokens: Number of input/prompt tokens.
             output_tokens: Number of output/completion tokens.

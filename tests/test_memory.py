@@ -165,7 +165,7 @@ class TestMemoryConfig:
         
         assert config.max_memories == 10000
         assert config.max_per_target == 1000
-        assert config.default_similarity_threshold == 0.7
+        assert config.default_similarity_threshold == 0.2
         assert config.default_recall_limit == 10
         assert config.embedding_provider == "none"
         assert config.privacy_mode is False

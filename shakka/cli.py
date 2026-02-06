@@ -87,7 +87,7 @@ def generate_command(
         None,
         "--provider",
         "-p",
-        help="LLM provider to use (openai, anthropic, ollama)"
+        help="LLM provider to use (openai, anthropic, ollama, openrouter)"
     ),
     interactive: bool = typer.Option(
         False,
@@ -265,7 +265,7 @@ def config_command(
         return
     
     if provider:
-        if provider not in ["openai", "anthropic", "ollama"]:
+        if provider not in ["openai", "anthropic", "ollama", "openrouter"]:
             display.print_error(f"Invalid provider: {provider}")
             raise typer.Exit(code=1)
         

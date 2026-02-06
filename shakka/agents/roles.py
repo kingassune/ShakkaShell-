@@ -7,6 +7,7 @@ Provides concrete agent implementations for:
 - Reporting
 """
 
+import json
 from typing import Optional, TYPE_CHECKING
 
 from .base import Agent, AgentConfig, AgentResult, AgentRole, AgentState
@@ -83,25 +84,24 @@ class ReconAgent(Agent):
         self,
         config: Optional[AgentConfig] = None,
         shared_memory=None,
+        shakka_config: Optional["ShakkaConfig"] = None,
     ):
         """Initialize the recon agent.
         
         Args:
             config: Agent configuration.
             shared_memory: Optional shared memory store.
+            shakka_config: Optional ShakkaConfig for provider settings.
         """
         if config is None:
             config = AgentConfig(role=AgentRole.RECON, model="gpt-4o")
         else:
             config.role = AgentRole.RECON
         
-        super().__init__(config, shared_memory)
+        super().__init__(config, shared_memory, shakka_config)
     
     async def execute(self, task: str, context: Optional[dict] = None) -> AgentResult:
-        """Execute a reconnaissance task.
-        
-        In production, this would call an LLM to generate and execute
-        recon commands. For now, provides a simulation.
+        """Execute a reconnaissance task using LLM.
         
         Args:
             task: Recon task description.
@@ -121,33 +121,65 @@ class ReconAgent(Agent):
                 metadata={"agent": self.name},
             )
         
-        # Simulate recon execution
-        # In production: call LLM, parse response, execute commands
-        
-        findings = {
-            "target": context.get("target") if context else "unknown",
-            "open_ports": [22, 80, 443],  # Simulated
-            "services": [
-                {"port": 22, "service": "ssh", "version": "OpenSSH 8.9"},
-                {"port": 80, "service": "http", "version": "nginx 1.24"},
-                {"port": 443, "service": "https", "version": "nginx 1.24"},
-            ],
-        }
-        
-        output = f"""Reconnaissance completed for task: {task}
+        # Build recon prompt
+        prompt = f"""Execute the following reconnaissance task:
 
-Findings:
-- Open ports: {', '.join(str(p) for p in findings['open_ports'])}
-- Services detected: {len(findings['services'])}
+TASK: {task}
 
-Detailed results stored in data field."""
+Provide your analysis as JSON with this structure:
+{{
+  "target": "target identifier",
+  "methodology": "approach taken",
+  "findings": {{
+    "open_ports": [list of ports],
+    "services": [{{"port": N, "service": "name", "version": "ver"}}],
+    "hostnames": ["hostname1"],
+    "vulnerabilities": ["potential vuln1"],
+    "notes": "additional findings"
+  }},
+  "commands_to_run": ["nmap command", "other commands"],
+  "summary": "brief summary of findings"
+}}
+
+Be specific with service versions and potential vulnerabilities."""
         
-        return AgentResult(
-            success=True,
-            output=output,
-            data=findings,
-            tokens_used=150,  # Simulated
-        )
+        try:
+            response = await self._call_llm(prompt, context)
+            
+            # Parse response
+            try:
+                # Handle markdown code blocks
+                if "```json" in response:
+                    import re
+                    json_match = re.search(r"```json\s*(.*?)\s*```", response, re.DOTALL)
+                    if json_match:
+                        response = json_match.group(1)
+                elif "```" in response:
+                    import re
+                    json_match = re.search(r"```\s*(.*?)\s*```", response, re.DOTALL)
+                    if json_match:
+                        response = json_match.group(1)
+                
+                findings = json.loads(response)
+            except json.JSONDecodeError:
+                findings = {"raw_response": response}
+            
+            output = f"""Reconnaissance completed for task: {task}
+
+{findings.get('summary', 'See data field for details.')}"""
+            
+            return AgentResult(
+                success=True,
+                output=output,
+                data=findings,
+                tokens_used=len(response.split()) * 2,  # Rough estimate
+            )
+        except Exception as e:
+            return AgentResult(
+                success=False,
+                output=f"Recon failed: {str(e)}",
+                error=str(e),
+            )
 
 
 class ExploitAgent(Agent):
@@ -164,22 +196,24 @@ class ExploitAgent(Agent):
         self,
         config: Optional[AgentConfig] = None,
         shared_memory=None,
+        shakka_config: Optional["ShakkaConfig"] = None,
     ):
         """Initialize the exploit agent.
         
         Args:
             config: Agent configuration.
             shared_memory: Optional shared memory store.
+            shakka_config: Optional ShakkaConfig for provider settings.
         """
         if config is None:
             config = AgentConfig(role=AgentRole.EXPLOIT, model="gpt-4o")
         else:
             config.role = AgentRole.EXPLOIT
         
-        super().__init__(config, shared_memory)
+        super().__init__(config, shared_memory, shakka_config)
     
     async def execute(self, task: str, context: Optional[dict] = None) -> AgentResult:
-        """Execute an exploitation task.
+        """Execute an exploitation task using LLM.
         
         Args:
             task: Exploit task description.
@@ -190,41 +224,75 @@ class ExploitAgent(Agent):
         """
         self._log_event("exploit_started", {"task": task[:100]})
         
-        # Use previous recon data if available
-        recon_data = {}
-        if context and "previous_results" in context:
-            for result in context.get("previous_results", []):
-                if "open_ports" in result.get("data", {}):
-                    recon_data = result["data"]
-                    break
-        
-        # Simulate vulnerability analysis
-        vulnerabilities = []
-        services = recon_data.get("services", [])
-        
-        for svc in services:
-            if svc.get("service") == "http":
-                vulnerabilities.append({
-                    "type": "potential_webapp_vuln",
-                    "port": svc["port"],
-                    "recommendation": "Run web vulnerability scanner",
-                })
-        
-        output = f"""Exploitation analysis for: {task}
+        # Build exploitation prompt
+        prompt = f"""Analyze and plan exploitation for the following task:
 
-Vulnerabilities identified: {len(vulnerabilities)}
-Based on recon data: {len(services)} services analyzed
+TASK: {task}
 
-Next steps:
-- Run targeted vulnerability scans
-- Check for known CVEs in detected versions"""
+Provide your analysis as JSON with this structure:
+{{
+  "vulnerability_assessment": [
+    {{
+      "type": "vuln type (e.g., RCE, SQLi, XSS)",
+      "cve": "CVE-XXXX-XXXXX if known",
+      "severity": "critical|high|medium|low",
+      "service": "affected service",
+      "port": port_number,
+      "description": "vulnerability description"
+    }}
+  ],
+  "recommended_exploits": [
+    {{
+      "name": "exploit name",
+      "source": "metasploit|exploitdb|custom",
+      "command": "command to run",
+      "success_probability": "high|medium|low"
+    }}
+  ],
+  "attack_chain": ["step 1", "step 2"],
+  "payloads": ["suggested payload 1"],
+  "prerequisites": ["what's needed first"],
+  "evasion_tips": ["how to avoid detection"],
+  "summary": "brief summary"
+}}
+
+Be specific with exploit details and MITRE ATT&CK technique IDs."""
         
-        return AgentResult(
-            success=True,
-            output=output,
-            data={"vulnerabilities": vulnerabilities, "analyzed_services": len(services)},
-            tokens_used=200,  # Simulated
-        )
+        try:
+            response = await self._call_llm(prompt, context)
+            
+            # Parse response
+            try:
+                import re
+                if "```json" in response:
+                    json_match = re.search(r"```json\s*(.*?)\s*```", response, re.DOTALL)
+                    if json_match:
+                        response = json_match.group(1)
+                elif "```" in response:
+                    json_match = re.search(r"```\s*(.*?)\s*```", response, re.DOTALL)
+                    if json_match:
+                        response = json_match.group(1)
+                
+                data = json.loads(response)
+            except json.JSONDecodeError:
+                data = {"raw_response": response}
+            
+            output = f"""Exploitation analysis for: {task}
+
+{data.get('summary', 'See data field for details.')}"""
+            
+            return AgentResult(
+                success=True,
+                output=output,
+                data=data,
+                tokens_used=len(response.split()) * 2,
+            )
+        except Exception as e:
+            return AgentResult(
+                success=False,
+                output=f"Exploitation analysis failed: {str(e)}",
+                error=str(e),
+            )
 
 
 class PersistenceAgent(Agent):
@@ -241,22 +309,24 @@ class PersistenceAgent(Agent):
         self,
         config: Optional[AgentConfig] = None,
         shared_memory=None,
+        shakka_config: Optional["ShakkaConfig"] = None,
     ):
         """Initialize the persistence agent.
         
         Args:
             config: Agent configuration.
             shared_memory: Optional shared memory store.
+            shakka_config: Optional ShakkaConfig for provider settings.
         """
         if config is None:
             config = AgentConfig(role=AgentRole.PERSISTENCE, model="gpt-4o-mini")
         else:
             config.role = AgentRole.PERSISTENCE
         
-        super().__init__(config, shared_memory)
+        super().__init__(config, shared_memory, shakka_config)
     
     async def execute(self, task: str, context: Optional[dict] = None) -> AgentResult:
-        """Execute a persistence task.
+        """Execute a persistence task using LLM.
         
         Args:
             task: Persistence task description.
@@ -267,28 +337,80 @@ class PersistenceAgent(Agent):
         """
         self._log_event("persistence_started", {"task": task[:100]})
         
-        # Simulate persistence setup
-        techniques = [
-            {"name": "SSH key injection", "stealth": "high"},
-            {"name": "Cron job", "stealth": "medium"},
-        ]
+        # Build persistence prompt
+        prompt = f"""Plan persistence mechanisms for the following task:
+
+TASK: {task}
+
+Provide your analysis as JSON with this structure:
+{{
+  "techniques": [
+    {{
+      "name": "technique name",
+      "mitre_id": "TXXXX.XXX",
+      "stealth_level": "high|medium|low",
+      "persistence_type": "user|system|boot",
+      "command": "implementation command",
+      "cleanup": "how to remove later",
+      "detection_risk": "what might detect this"
+    }}
+  ],
+  "lateral_movement": [
+    {{
+      "method": "movement method",
+      "prerequisites": ["what's needed"],
+      "command": "command to execute"
+    }}
+  ],
+  "privilege_escalation": [
+    {{
+      "technique": "privesc technique",
+      "from": "current privilege",
+      "to": "target privilege",
+      "command": "command"
+    }}
+  ],
+  "cleanup_plan": ["step 1", "step 2"],
+  "summary": "brief summary"
+}}
+
+Focus on stealth and avoiding detection."""
         
-        output = f"""Persistence analysis for: {task}
+        try:
+            response = await self._call_llm(prompt, context)
+            
+            # Parse response
+            try:
+                import re
+                if "```json" in response:
+                    json_match = re.search(r"```json\s*(.*?)\s*```", response, re.DOTALL)
+                    if json_match:
+                        response = json_match.group(1)
+                elif "```" in response:
+                    json_match = re.search(r"```\s*(.*?)\s*```", response, re.DOTALL)
+                    if json_match:
+                        response = json_match.group(1)
+                
+                data = json.loads(response)
+            except json.JSONDecodeError:
+                data = {"raw_response": response}
+            
+            output = f"""Persistence analysis for: {task}
 
-Recommended techniques: {len(techniques)}
-
-Techniques by stealth level:
-- High stealth: SSH key injection
-- Medium stealth: Cron job
-
-Note: Always clean up artifacts after engagement."""
-        
-        return AgentResult(
-            success=True,
-            output=output,
-            data={"techniques": techniques},
-            tokens_used=100,  # Simulated
-        )
+{data.get('summary', 'See data field for details.')}"""
+            
+            return AgentResult(
+                success=True,
+                output=output,
+                data=data,
+                tokens_used=len(response.split()) * 2,
+            )
+        except Exception as e:
+            return AgentResult(
+                success=False,
+                output=f"Persistence analysis failed: {str(e)}",
+                error=str(e),
+            )
 
 
 class ReporterAgent(Agent):
@@ -305,22 +427,24 @@ class ReporterAgent(Agent):
         self,
         config: Optional[AgentConfig] = None,
         shared_memory=None,
+        shakka_config: Optional["ShakkaConfig"] = None,
     ):
         """Initialize the reporter agent.
         
         Args:
             config: Agent configuration.
             shared_memory: Optional shared memory store.
+            shakka_config: Optional ShakkaConfig for provider settings.
         """
         if config is None:
             config = AgentConfig(role=AgentRole.REPORTER, model="gpt-4o")
         else:
             config.role = AgentRole.REPORTER
         
-        super().__init__(config, shared_memory)
+        super().__init__(config, shared_memory, shakka_config)
     
     async def execute(self, task: str, context: Optional[dict] = None) -> AgentResult:
-        """Execute a reporting task.
+        """Execute a reporting task using LLM.
         
         Args:
             task: Reporting task description.
@@ -331,42 +455,89 @@ class ReporterAgent(Agent):
         """
         self._log_event("report_started", {"task": task[:100]})
         
-        # Aggregate previous results
+        # Aggregate previous results for context
         all_findings = []
         if context and "previous_results" in context:
             for result in context.get("previous_results", []):
                 if result.get("data"):
                     all_findings.append(result["data"])
         
-        # Generate report summary
-        report = {
-            "title": f"Security Assessment Report",
-            "objective": context.get("plan", {}).get("objective", task) if context else task,
-            "sections": [
-                {"name": "Executive Summary", "content": "Assessment findings overview..."},
-                {"name": "Methodology", "content": "Multi-agent assessment approach..."},
-                {"name": "Findings", "content": f"{len(all_findings)} finding categories analyzed"},
-                {"name": "Recommendations", "content": "Remediation priorities..."},
-            ],
-            "findings_data": all_findings,
-        }
+        # Build reporting prompt
+        findings_str = json.dumps(all_findings, indent=2) if all_findings else "No previous findings"
         
-        output = f"""Report generated for: {task}
+        prompt = f"""Generate a professional penetration testing report for:
 
-Report sections: {len(report['sections'])}
-Findings aggregated: {len(all_findings)} categories
+TASK: {task}
 
-Report structure:
-1. Executive Summary
-2. Methodology
-3. Findings
-4. Recommendations
+FINDINGS DATA:
+{findings_str[:3000]}  
 
-Full report data available in results."""
+Provide your report as JSON with this structure:
+{{
+  "title": "Report title",
+  "executive_summary": "High-level summary for executives",
+  "methodology": "Approach taken during assessment",
+  "findings": [
+    {{
+      "id": "FIND-001",
+      "title": "Finding title",
+      "severity": "critical|high|medium|low|informational",
+      "description": "Detailed description",
+      "impact": "Business impact",
+      "recommendation": "How to fix",
+      "references": ["CVE or reference links"]
+    }}
+  ],
+  "risk_summary": {{
+    "critical": count,
+    "high": count,
+    "medium": count,
+    "low": count
+  }},
+  "recommendations": [
+    {{
+      "priority": 1,
+      "action": "What to do",
+      "rationale": "Why"
+    }}
+  ],
+  "conclusion": "Overall assessment conclusion"
+}}
+
+Be professional and provide actionable recommendations."""
         
-        return AgentResult(
-            success=True,
-            output=output,
-            data={"report": report},
-            tokens_used=250,  # Simulated
-        )
+        try:
+            response = await self._call_llm(prompt, context)
+            
+            # Parse response
+            try:
+                import re
+                if "```json" in response:
+                    json_match = re.search(r"```json\s*(.*?)\s*```", response, re.DOTALL)
+                    if json_match:
+                        response = json_match.group(1)
+                elif "```" in response:
+                    json_match = re.search(r"```\s*(.*?)\s*```", response, re.DOTALL)
+                    if json_match:
+                        response = json_match.group(1)
+                
+                report = json.loads(response)
+            except json.JSONDecodeError:
+                report = {"raw_response": response}
+            
+            output = f"""Report generated for: {task}
+
+{report.get('executive_summary', 'See data field for full report.')}"""
+            
+            return AgentResult(
+                success=True,
+                output=output,
+                data={"report": report},
+                tokens_used=len(response.split()) * 2,
+            )
+        except Exception as e:
+            return AgentResult(
+                success=False,
+                output=f"Report generation failed: {str(e)}",
+                error=str(e),
+            )

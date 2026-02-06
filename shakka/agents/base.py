@@ -10,6 +10,9 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Optional, TYPE_CHECKING
 
+from shakka.config import ShakkaConfig
+from shakka.providers.base import LLMProvider
+
 if TYPE_CHECKING:
     from shakka.storage.memory import MemoryStore
 
@@ -120,19 +123,135 @@ class Agent(ABC):
         self,
         config: Optional[AgentConfig] = None,
         shared_memory: Optional["MemoryStore"] = None,
+        shakka_config: Optional[ShakkaConfig] = None,
     ):
         """Initialize the agent.
         
         Args:
             config: Agent configuration. Uses defaults if not provided.
             shared_memory: Optional shared memory store for agent coordination.
+            shakka_config: Optional ShakkaConfig for provider settings.
         """
         self.config = config or AgentConfig()
         self._shared_memory = shared_memory
+        self._shakka_config = shakka_config or ShakkaConfig()
         self._state = AgentState.IDLE
         self._history: list[dict] = []
         self._start_time: Optional[datetime] = None
         self._interrupted = False
+        self._provider: Optional[LLMProvider] = None
+    
+    def _get_provider(self) -> LLMProvider:
+        """Get or create the LLM provider for this agent.
+        
+        Returns:
+            Configured LLMProvider instance.
+        """
+        if self._provider:
+            return self._provider
+        
+        provider_name = self.config.provider or self._shakka_config.default_provider
+        
+        if provider_name == "openai":
+            from shakka.providers.openai import OpenAIProvider
+            api_key = self._shakka_config.openai_api_key
+            if not api_key:
+                raise ValueError("OpenAI API key not found.")
+            self._provider = OpenAIProvider(api_key=api_key)
+        elif provider_name == "anthropic":
+            from shakka.providers.anthropic import AnthropicProvider
+            api_key = self._shakka_config.anthropic_api_key
+            if not api_key:
+                raise ValueError("Anthropic API key not found.")
+            self._provider = AnthropicProvider(api_key=api_key)
+        elif provider_name == "ollama":
+            from shakka.providers.ollama import OllamaProvider
+            self._provider = OllamaProvider(
+                base_url=self._shakka_config.ollama_base_url,
+                model=self._shakka_config.ollama_model
+            )
+        elif provider_name == "openrouter":
+            from shakka.providers.openrouter import OpenRouterProvider
+            api_key = self._shakka_config.openrouter_api_key
+            if not api_key:
+                raise ValueError("OpenRouter API key not found.")
+            self._provider = OpenRouterProvider(
+                api_key=api_key,
+                model=self._shakka_config.openrouter_model,
+                site_url=self._shakka_config.openrouter_site_url
+            )
+        else:
+            raise ValueError(f"Unknown provider: {provider_name}")
+        
+        return self._provider
+    
+    async def _call_llm(self, prompt: str, context: Optional[dict] = None) -> str:
+        """Call the LLM directly for agent reasoning tasks.
+        
+        Uses LiteLLM directly for flexibility in response format,
+        unlike provider.generate() which returns CommandResult.
+        
+        Args:
+            prompt: User prompt.
+            context: Optional context to include.
+            
+        Returns:
+            LLM response text.
+            
+        Raises:
+            ValueError: If LLM call fails.
+        """
+        from litellm import acompletion
+        
+        # Build messages with system and user prompts
+        messages = [
+            {"role": "system", "content": self.get_system_prompt()},
+            {"role": "user", "content": prompt}
+        ]
+        
+        if context:
+            import json
+            messages[-1]["content"] += f"\n\nContext: {json.dumps(context)}"
+        
+        # Determine model and API key based on provider
+        provider_name = self.config.provider or self._shakka_config.default_provider
+        
+        if provider_name == "openrouter":
+            model = f"openrouter/{self._shakka_config.openrouter_model}"
+            api_key = self._shakka_config.openrouter_api_key
+            extra_headers = {
+                "HTTP-Referer": self._shakka_config.openrouter_site_url or "https://github.com/ShakkaShell",
+                "X-Title": "ShakkaShell",
+            }
+        elif provider_name == "openai":
+            model = self.config.model or self._shakka_config.agent_default_model or "gpt-4o"
+            api_key = self._shakka_config.openai_api_key
+            extra_headers = None
+        elif provider_name == "anthropic":
+            model = self.config.model or self._shakka_config.agent_default_model or "claude-3-5-sonnet-20241022"
+            api_key = self._shakka_config.anthropic_api_key
+            extra_headers = None
+        elif provider_name == "ollama":
+            model = f"ollama/{self._shakka_config.ollama_model}"
+            api_key = None
+            extra_headers = None
+        else:
+            raise ValueError(f"Provider {provider_name} not supported for agent LLM calls")
+        
+        try:
+            response = await acompletion(
+                model=model,
+                messages=messages,
+                api_key=api_key,
+                temperature=0.1,
+                extra_headers=extra_headers,
+            )
+            
+            content = response.choices[0].message.content
+            return content
+            
+        except Exception as e:
+            raise ValueError(f"{provider_name.title()} API error: {str(e)}")
     
     @property
     def role(self) -> AgentRole:

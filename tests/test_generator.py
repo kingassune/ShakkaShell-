@@ -167,6 +167,7 @@ def test_list_providers():
     assert "openai" in providers
     assert "anthropic" in providers
     assert "ollama" in providers
+    assert "openrouter" in providers
 
 
 def test_get_provider_status(mock_config):
