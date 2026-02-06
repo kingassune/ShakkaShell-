@@ -32,6 +32,17 @@ from shakka.mcp import (
     HTTPTransportConfig,
 )
 from shakka.planning import AttackPlanner, PlannerConfig
+from shakka.reports import (
+    ReportGenerator,
+    GeneratorConfig,
+    OutputFormat,
+    Report,
+    Finding,
+    Severity,
+    ReportMetadata,
+    create_report,
+    create_finding,
+)
 from shakka.storage import MemoryStore, MemoryType
 from shakka.utils import display
 
@@ -1132,6 +1143,222 @@ def plan_command(
     if plan.recommended_first_step:
         display.console.print()
         display.print_success(f"Recommended first step: {plan.recommended_first_step}")
+
+
+@app.command(name="report")
+def report_command(
+    output: Optional[str] = typer.Option(
+        None,
+        "--output",
+        "-o",
+        help="Output file path (auto-generated if not specified)"
+    ),
+    format: str = typer.Option(
+        "markdown",
+        "--format",
+        "-f",
+        help="Output format: markdown, html, json, docx, pdf"
+    ),
+    title: str = typer.Option(
+        "Penetration Testing Report",
+        "--title",
+        "-t",
+        help="Report title"
+    ),
+    client: str = typer.Option(
+        "",
+        "--client",
+        "-c",
+        help="Client name for the report"
+    ),
+    assessor: str = typer.Option(
+        "",
+        "--assessor",
+        "-a",
+        help="Assessor / tester name"
+    ),
+    input_file: Optional[str] = typer.Option(
+        None,
+        "--input",
+        "-i",
+        help="Load report data from JSON file"
+    ),
+    template: Optional[str] = typer.Option(
+        None,
+        "--template",
+        help="Template name to use (default, html, executive, technical)"
+    ),
+    no_summary: bool = typer.Option(
+        False,
+        "--no-summary",
+        help="Skip auto-generated executive summary"
+    ),
+    preview: bool = typer.Option(
+        False,
+        "--preview",
+        "-p",
+        help="Preview report content without saving to file"
+    ),
+):
+    """Generate a penetration testing report.
+    
+    Generates professional reports in multiple formats from session
+    findings or a JSON input file.
+    
+    Examples:
+        shakka report --format html --output report.html
+        shakka report --format docx --output report.docx --client "Acme Corp"
+        shakka report --input findings.json --format pdf
+        shakka report --preview
+        shakka report --title "Q1 Assessment" --assessor "Red Team"
+    """
+    import json as json_lib
+
+    # Validate format
+    valid_formats = ["markdown", "html", "json", "docx", "pdf"]
+    if format.lower() not in valid_formats:
+        display.print_error(f"Invalid format: {format}")
+        display.print_info(f"Valid formats: {', '.join(valid_formats)}")
+        raise typer.Exit(code=1)
+
+    output_format = OutputFormat(format.lower())
+
+    # Build generator config
+    gen_config = GeneratorConfig(
+        default_format=output_format,
+        default_template=template or "default",
+        auto_generate_summary=not no_summary,
+    )
+
+    generator = ReportGenerator(config=gen_config)
+
+    # Load or create report
+    if input_file:
+        # Load from JSON file
+        try:
+            from pathlib import Path
+            input_path = Path(input_file)
+            if not input_path.exists():
+                display.print_error(f"Input file not found: {input_file}")
+                raise typer.Exit(code=1)
+            
+            with open(input_path, "r") as f:
+                data = json_lib.load(f)
+            
+            report = Report.from_dict(data)
+            display.print_info(f"Loaded report with {report.total_findings} finding(s)")
+        except json_lib.JSONDecodeError as e:
+            display.print_error(f"Invalid JSON in input file: {e}")
+            raise typer.Exit(code=1)
+        except Exception as e:
+            display.print_error(f"Failed to load input file: {e}")
+            raise typer.Exit(code=1)
+    else:
+        # Create report from memory store session data
+        report = create_report(
+            title=title,
+            client=client,
+            assessor=assessor,
+        )
+
+        # Try to pull findings from memory store
+        try:
+            store = MemoryStore()
+            results = store.recall("findings vulnerabilities", limit=50)
+            if hasattr(results, 'entries') and results.entries:
+                for entry in results.entries:
+                    finding = create_finding(
+                        title=entry.content[:80],
+                        description=entry.content,
+                        severity=Severity.MEDIUM,
+                        affected_asset=getattr(entry, 'target', '') or '',
+                    )
+                    report.add_finding(finding)
+                display.print_info(f"Loaded {len(results.entries)} finding(s) from memory")
+        except Exception:
+            pass  # Memory store may not have data, that's okay
+
+    display.console.print(Panel(
+        f"[bold cyan]Generating report:[/bold cyan] {report.metadata.title}",
+        title="[bold green]Report Generator[/bold green]",
+        border_style="green",
+    ))
+    display.console.print()
+
+    # Show report summary
+    summary_table = Table(
+        title="Report Summary",
+        show_header=True,
+        header_style="bold cyan",
+    )
+    summary_table.add_column("Metric", width=25)
+    summary_table.add_column("Value", width=20)
+
+    severity_icons = {
+        "critical": "🔴",
+        "high": "🟠",
+        "medium": "🟡",
+        "low": "🟢",
+        "info": "🔵",
+    }
+
+    summary_table.add_row("Title", report.metadata.title)
+    summary_table.add_row("Client", report.metadata.client or "N/A")
+    summary_table.add_row("Assessor", report.metadata.assessor or "N/A")
+    summary_table.add_row("Total Findings", str(report.total_findings))
+    summary_table.add_row(
+        f"{severity_icons['critical']} Critical", str(report.critical_count)
+    )
+    summary_table.add_row(
+        f"{severity_icons['high']} High", str(report.high_count)
+    )
+    summary_table.add_row(
+        f"{severity_icons['medium']} Medium", str(report.medium_count)
+    )
+    summary_table.add_row(
+        f"{severity_icons['low']} Low", str(report.low_count)
+    )
+    summary_table.add_row(
+        f"{severity_icons['info']} Info", str(report.info_count)
+    )
+    summary_table.add_row("Risk Score", f"{report.risk_score:.1f}/100")
+    summary_table.add_row("Format", output_format.value.title())
+
+    display.console.print(summary_table)
+    display.console.print()
+
+    # Preview mode
+    if preview:
+        try:
+            content = generator.preview(report, output_format)
+            if output_format == OutputFormat.JSON:
+                display.console.print(Syntax(content, "json", theme="monokai"))
+            elif output_format == OutputFormat.HTML:
+                display.console.print(Syntax(content, "html", theme="monokai"))
+            else:
+                display.console.print(content)
+        except Exception as e:
+            display.print_error(f"Preview failed: {e}")
+            raise typer.Exit(code=1)
+        raise typer.Exit(code=0)
+
+    # Generate report
+    try:
+        with display.print_spinner_context(f"Generating {output_format.value} report..."):
+            output_path = generator.generate(
+                report,
+                output_format=output_format,
+                output_path=output,
+                template_name=template,
+            )
+
+        display.print_success(f"Report generated: {output_path}")
+        display.print_info(f"Format: {output_format.value.title()}")
+        display.print_info(f"Findings: {report.total_findings}")
+
+    except Exception as e:
+        display.print_error(f"Report generation failed: {e}")
+        raise typer.Exit(code=1)
 
 
 if __name__ == "__main__":

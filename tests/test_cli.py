@@ -1174,3 +1174,364 @@ class TestPlanImports:
         assert PlannerConfig is not None
 
 
+class TestReportCommand:
+    """Tests for the report command via CliRunner."""
+
+    def _mock_report(self):
+        """Create a mock Report for testing."""
+        from shakka.reports import (
+            Report, Finding, Severity, ReportMetadata, CVSSScore, Evidence, EvidenceType,
+        )
+        metadata = ReportMetadata(
+            title="Test Assessment Report",
+            client="Acme Corp",
+            assessor="Red Team",
+            assessment_type="External Penetration Test",
+        )
+        report = Report(metadata=metadata)
+        report.add_finding(Finding(
+            title="SQL Injection in Login Form",
+            description="A SQL injection vulnerability was found in the login form.",
+            severity=Severity.CRITICAL,
+            cvss=CVSSScore(score=9.8),
+            affected_asset="web.example.com",
+            remediation="Use parameterized queries.",
+        ))
+        report.add_finding(Finding(
+            title="Missing Security Headers",
+            description="Several security headers are missing.",
+            severity=Severity.LOW,
+            affected_asset="web.example.com",
+            remediation="Add X-Frame-Options, CSP headers.",
+        ))
+        return report
+
+    def test_report_command_basic(self):
+        """Test report command with default options."""
+        with patch("shakka.cli.ReportGenerator") as MockGen, \
+             patch("shakka.cli.MemoryStore"):
+            mock_gen = MockGen.return_value
+            mock_gen.generate.return_value = "/tmp/report.md"
+            mock_gen.preview.return_value = "# Report"
+
+            result = runner.invoke(app, ["report"])
+            assert "Report generation failed" not in result.stdout
+
+    def test_report_command_with_format(self):
+        """Test report command with --format option."""
+        with patch("shakka.cli.ReportGenerator") as MockGen, \
+             patch("shakka.cli.MemoryStore"):
+            mock_gen = MockGen.return_value
+            mock_gen.generate.return_value = "/tmp/report.html"
+
+            result = runner.invoke(app, ["report", "--format", "html"])
+            assert "Invalid format" not in result.stdout
+
+    def test_report_command_invalid_format(self):
+        """Test report command with invalid format raises exit."""
+        # CliRunner has known routing issues, test via direct function call
+        from shakka.cli import report_command
+        import typer
+
+        with pytest.raises(typer.Exit) as exc_info:
+            report_command(
+                output=None, format="xlsx", title="Test", client="",
+                assessor="", input_file=None, template=None,
+                no_summary=False, preview=False,
+            )
+        assert exc_info.value.exit_code == 1
+
+    def test_report_command_with_client(self):
+        """Test report command with --client option."""
+        with patch("shakka.cli.ReportGenerator") as MockGen, \
+             patch("shakka.cli.MemoryStore"):
+            mock_gen = MockGen.return_value
+            mock_gen.generate.return_value = "/tmp/report.md"
+
+            result = runner.invoke(app, [
+                "report", "--client", "Acme Corp", "--assessor", "Tester"
+            ])
+            assert "Report generation failed" not in result.stdout
+
+    def test_report_command_preview(self):
+        """Test report command with --preview flag."""
+        with patch("shakka.cli.ReportGenerator") as MockGen, \
+             patch("shakka.cli.MemoryStore"):
+            mock_gen = MockGen.return_value
+            mock_gen.preview.return_value = "# Preview Report\n\nNo findings."
+
+            result = runner.invoke(app, ["report", "--preview"])
+            assert "Report generation failed" not in result.stdout
+
+
+class TestReportFunctionsDirect:
+    """Test report CLI function directly (bypassing typer)."""
+
+    def _mock_report(self):
+        """Create a mock Report."""
+        from shakka.reports import Report, Finding, Severity, ReportMetadata
+        metadata = ReportMetadata(
+            title="Direct Test Report",
+            client="TestClient",
+            assessor="TestAssessor",
+        )
+        report = Report(metadata=metadata)
+        report.add_finding(Finding(
+            title="XSS Vulnerability",
+            description="Stored XSS in comment field.",
+            severity=Severity.HIGH,
+            affected_asset="app.example.com",
+        ))
+        return report
+
+    def test_report_function_generates_report(self):
+        """Test report_command function generates a report."""
+        from shakka.cli import report_command
+
+        with patch("shakka.cli.ReportGenerator") as MockGen, \
+             patch("shakka.cli.MemoryStore"):
+            mock_gen = MockGen.return_value
+            mock_gen.generate.return_value = "/tmp/test_report.md"
+
+            report_command(
+                output="/tmp/test_report.md",
+                format="markdown",
+                title="Test Report",
+                client="Client",
+                assessor="Tester",
+                input_file=None,
+                template=None,
+                no_summary=False,
+                preview=False,
+            )
+
+            mock_gen.generate.assert_called_once()
+
+    def test_report_function_invalid_format_raises(self):
+        """Test report_command with invalid format raises exit."""
+        from shakka.cli import report_command
+        import typer
+
+        with pytest.raises(typer.Exit) as exc_info:
+            report_command(
+                output=None,
+                format="xlsx",
+                title="Test",
+                client="",
+                assessor="",
+                input_file=None,
+                template=None,
+                no_summary=False,
+                preview=False,
+            )
+        assert exc_info.value.exit_code == 1
+
+    def test_report_function_preview_mode(self):
+        """Test report_command preview exits with code 0."""
+        from shakka.cli import report_command
+        import typer
+
+        with patch("shakka.cli.ReportGenerator") as MockGen, \
+             patch("shakka.cli.MemoryStore"):
+            mock_gen = MockGen.return_value
+            mock_gen.preview.return_value = "# Report Preview"
+
+            with pytest.raises(typer.Exit) as exc_info:
+                report_command(
+                    output=None,
+                    format="markdown",
+                    title="Preview Test",
+                    client="",
+                    assessor="",
+                    input_file=None,
+                    template=None,
+                    no_summary=False,
+                    preview=True,
+                )
+            assert exc_info.value.exit_code == 0
+
+    def test_report_function_from_json_file(self, tmp_path):
+        """Test report_command loads report from JSON input file."""
+        from shakka.cli import report_command
+        import json
+
+        # Create a test JSON file
+        report_data = {
+            "metadata": {
+                "title": "JSON Report",
+                "client": "JsonClient",
+            },
+            "findings": [
+                {
+                    "title": "Test Finding",
+                    "description": "A test finding.",
+                    "severity": "high",
+                    "affected_asset": "target.com",
+                    "remediation": "Fix it.",
+                },
+            ],
+        }
+        json_file = tmp_path / "input.json"
+        json_file.write_text(json.dumps(report_data))
+
+        with patch("shakka.cli.ReportGenerator") as MockGen:
+            mock_gen = MockGen.return_value
+            mock_gen.generate.return_value = str(tmp_path / "output.md")
+
+            report_command(
+                output=str(tmp_path / "output.md"),
+                format="markdown",
+                title="Ignored",
+                client="Ignored",
+                assessor="",
+                input_file=str(json_file),
+                template=None,
+                no_summary=False,
+                preview=False,
+            )
+
+            mock_gen.generate.assert_called_once()
+            # The report passed to generate should have the finding from JSON
+            call_args = mock_gen.generate.call_args
+            report_arg = call_args[0][0]
+            assert report_arg.total_findings == 1
+            assert report_arg.metadata.client == "JsonClient"
+
+    def test_report_function_missing_input_file(self):
+        """Test report_command with nonexistent input file."""
+        from shakka.cli import report_command
+        import typer
+
+        with pytest.raises(typer.Exit) as exc_info:
+            report_command(
+                output=None,
+                format="markdown",
+                title="Test",
+                client="",
+                assessor="",
+                input_file="/nonexistent/file.json",
+                template=None,
+                no_summary=False,
+                preview=False,
+            )
+        assert exc_info.value.exit_code == 1
+
+    def test_report_function_invalid_json_file(self, tmp_path):
+        """Test report_command with invalid JSON input file."""
+        from shakka.cli import report_command
+        import typer
+
+        bad_json = tmp_path / "bad.json"
+        bad_json.write_text("not valid json {{{")
+
+        with pytest.raises(typer.Exit) as exc_info:
+            report_command(
+                output=None,
+                format="markdown",
+                title="Test",
+                client="",
+                assessor="",
+                input_file=str(bad_json),
+                template=None,
+                no_summary=False,
+                preview=False,
+            )
+        assert exc_info.value.exit_code == 1
+
+    def test_report_function_generation_error(self):
+        """Test report_command handles generation errors."""
+        from shakka.cli import report_command
+        import typer
+
+        with patch("shakka.cli.ReportGenerator") as MockGen, \
+             patch("shakka.cli.MemoryStore"):
+            mock_gen = MockGen.return_value
+            mock_gen.generate.side_effect = Exception("Disk full")
+
+            with pytest.raises(typer.Exit) as exc_info:
+                report_command(
+                    output=None,
+                    format="markdown",
+                    title="Test",
+                    client="",
+                    assessor="",
+                    input_file=None,
+                    template=None,
+                    no_summary=False,
+                    preview=False,
+                )
+            assert exc_info.value.exit_code == 1
+
+    def test_report_function_with_template(self):
+        """Test report_command passes template name."""
+        from shakka.cli import report_command
+
+        with patch("shakka.cli.ReportGenerator") as MockGen, \
+             patch("shakka.cli.MemoryStore"):
+            mock_gen = MockGen.return_value
+            mock_gen.generate.return_value = "/tmp/report.html"
+
+            report_command(
+                output=None,
+                format="html",
+                title="Test",
+                client="",
+                assessor="",
+                input_file=None,
+                template="executive",
+                no_summary=True,
+                preview=False,
+            )
+
+            # Check config was built with no_summary=True
+            config_arg = MockGen.call_args[1]["config"]
+            assert config_arg.auto_generate_summary is False
+            # Check template was passed
+            call_kwargs = mock_gen.generate.call_args[1]
+            assert call_kwargs["template_name"] == "executive"
+
+
+class TestReportImports:
+    """Test report-related imports are available in CLI."""
+
+    def test_report_generator_import(self):
+        """Test ReportGenerator is importable from CLI module."""
+        from shakka.cli import ReportGenerator
+        assert ReportGenerator is not None
+
+    def test_generator_config_import(self):
+        """Test GeneratorConfig is importable from CLI module."""
+        from shakka.cli import GeneratorConfig
+        assert GeneratorConfig is not None
+
+    def test_output_format_import(self):
+        """Test OutputFormat is importable from CLI module."""
+        from shakka.cli import OutputFormat
+        assert OutputFormat is not None
+
+    def test_report_model_import(self):
+        """Test Report model is importable from CLI module."""
+        from shakka.cli import Report
+        assert Report is not None
+
+    def test_finding_model_import(self):
+        """Test Finding model is importable from CLI module."""
+        from shakka.cli import Finding
+        assert Finding is not None
+
+    def test_severity_import(self):
+        """Test Severity is importable from CLI module."""
+        from shakka.cli import Severity
+        assert Severity is not None
+
+    def test_create_report_import(self):
+        """Test create_report is importable from CLI module."""
+        from shakka.cli import create_report
+        assert create_report is not None
+
+    def test_create_finding_import(self):
+        """Test create_finding is importable from CLI module."""
+        from shakka.cli import create_finding
+        assert create_finding is not None
+
+
