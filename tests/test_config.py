@@ -134,3 +134,136 @@ def test_config_fallback_custom_providers():
     config = ShakkaConfig(fallback_providers=["ollama"])
     
     assert config.fallback_providers == ["ollama"]
+
+
+# =============================================================================
+# Agent Model Configuration Tests
+# =============================================================================
+
+class TestAgentModelConfig:
+    """Tests for per-agent-role model configuration."""
+    
+    def test_get_agent_model_defaults(self):
+        """Test default agent model values."""
+        config = ShakkaConfig()
+        
+        # Orchestrator has its own model
+        assert config.get_agent_model("orchestrator") == "gpt-4o"
+        
+        # Other roles use agent_default_model
+        assert config.get_agent_model("recon") == "gpt-4o"
+        assert config.get_agent_model("exploit") == "gpt-4o"
+        assert config.get_agent_model("persistence") == "gpt-4o"
+        assert config.get_agent_model("reporter") == "gpt-4o"
+    
+    def test_get_agent_model_per_role(self):
+        """Test per-role model configuration."""
+        config = ShakkaConfig(
+            agent_recon_model="claude-sonnet-4",
+            agent_exploit_model="o1",
+            agent_persistence_model="gpt-4o-mini",
+            agent_reporter_model="claude-haiku-3",
+        )
+        
+        assert config.get_agent_model("recon") == "claude-sonnet-4"
+        assert config.get_agent_model("exploit") == "o1"
+        assert config.get_agent_model("persistence") == "gpt-4o-mini"
+        assert config.get_agent_model("reporter") == "claude-haiku-3"
+        # Orchestrator still uses its own field
+        assert config.get_agent_model("orchestrator") == "gpt-4o"
+    
+    def test_get_agent_model_case_insensitive(self):
+        """Test role name is case-insensitive."""
+        config = ShakkaConfig(agent_recon_model="test-model")
+        
+        assert config.get_agent_model("RECON") == "test-model"
+        assert config.get_agent_model("Recon") == "test-model"
+        assert config.get_agent_model("recon") == "test-model"
+    
+    def test_get_agent_model_custom_default(self):
+        """Test custom default agent model."""
+        config = ShakkaConfig(agent_default_model="custom-model")
+        
+        # Unset roles should use agent_default_model
+        assert config.get_agent_model("recon") == "custom-model"
+        assert config.get_agent_model("exploit") == "custom-model"
+    
+    def test_get_agent_model_orchestrator_model(self):
+        """Test orchestrator model configuration."""
+        config = ShakkaConfig(agent_orchestrator_model="gpt-4-turbo")
+        
+        assert config.get_agent_model("orchestrator") == "gpt-4-turbo"
+    
+    def test_get_agent_provider_defaults(self):
+        """Test default agent provider values."""
+        config = ShakkaConfig()
+        
+        # All default to default_provider
+        assert config.get_agent_provider("orchestrator") == "openai"
+        assert config.get_agent_provider("recon") == "openai"
+        assert config.get_agent_provider("exploit") == "openai"
+    
+    def test_get_agent_provider_per_role(self):
+        """Test per-role provider configuration."""
+        config = ShakkaConfig(
+            agent_recon_provider="anthropic",
+            agent_exploit_provider="openai",
+            agent_persistence_provider="ollama",
+        )
+        
+        assert config.get_agent_provider("recon") == "anthropic"
+        assert config.get_agent_provider("exploit") == "openai"
+        assert config.get_agent_provider("persistence") == "ollama"
+        # Reporter uses default
+        assert config.get_agent_provider("reporter") == "openai"
+    
+    def test_get_agent_provider_default_agent_provider(self):
+        """Test agent_default_provider fallback."""
+        config = ShakkaConfig(
+            agent_default_provider="anthropic",
+        )
+        
+        # All should use agent_default_provider
+        assert config.get_agent_provider("recon") == "anthropic"
+        assert config.get_agent_provider("exploit") == "anthropic"
+        assert config.get_agent_provider("orchestrator") == "anthropic"
+    
+    def test_get_agent_provider_role_overrides_default(self):
+        """Test role-specific provider overrides default."""
+        config = ShakkaConfig(
+            agent_default_provider="anthropic",
+            agent_recon_provider="openai",
+        )
+        
+        assert config.get_agent_provider("recon") == "openai"
+        assert config.get_agent_provider("exploit") == "anthropic"
+    
+    def test_agent_config_from_env(self, monkeypatch):
+        """Test agent model configuration from environment."""
+        monkeypatch.setenv("SHAKKA_AGENT_RECON_MODEL", "env-recon-model")
+        monkeypatch.setenv("SHAKKA_AGENT_EXPLOIT_PROVIDER", "anthropic")
+        
+        config = ShakkaConfig()
+        
+        assert config.agent_recon_model == "env-recon-model"
+        assert config.agent_exploit_provider == "anthropic"
+    
+    def test_agent_config_fields_exist(self):
+        """Test all agent config fields exist."""
+        config = ShakkaConfig()
+        
+        # Model fields
+        assert hasattr(config, 'agent_orchestrator_model')
+        assert hasattr(config, 'agent_default_model')
+        assert hasattr(config, 'agent_recon_model')
+        assert hasattr(config, 'agent_exploit_model')
+        assert hasattr(config, 'agent_persistence_model')
+        assert hasattr(config, 'agent_reporter_model')
+        
+        # Provider fields
+        assert hasattr(config, 'agent_default_provider')
+        assert hasattr(config, 'agent_orchestrator_provider')
+        assert hasattr(config, 'agent_recon_provider')
+        assert hasattr(config, 'agent_exploit_provider')
+        assert hasattr(config, 'agent_persistence_provider')
+        assert hasattr(config, 'agent_reporter_provider')

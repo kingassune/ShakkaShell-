@@ -163,6 +163,58 @@ class ShakkaConfig(BaseSettings):
         description="Default model for specialized agents"
     )
     
+    # Per-role agent model configuration
+    agent_recon_model: Optional[str] = Field(
+        default=None,
+        description="Model for recon agent (defaults to agent_default_model)"
+    )
+    
+    agent_exploit_model: Optional[str] = Field(
+        default=None,
+        description="Model for exploit agent (defaults to agent_default_model)"
+    )
+    
+    agent_persistence_model: Optional[str] = Field(
+        default=None,
+        description="Model for persistence agent (defaults to agent_default_model)"
+    )
+    
+    agent_reporter_model: Optional[str] = Field(
+        default=None,
+        description="Model for reporter agent (defaults to agent_default_model)"
+    )
+    
+    # Per-role agent provider configuration
+    agent_default_provider: Optional[str] = Field(
+        default=None,
+        description="Default provider for agents (defaults to default_provider)"
+    )
+    
+    agent_orchestrator_provider: Optional[str] = Field(
+        default=None,
+        description="Provider for orchestrator agent"
+    )
+    
+    agent_recon_provider: Optional[str] = Field(
+        default=None,
+        description="Provider for recon agent"
+    )
+    
+    agent_exploit_provider: Optional[str] = Field(
+        default=None,
+        description="Provider for exploit agent"
+    )
+    
+    agent_persistence_provider: Optional[str] = Field(
+        default=None,
+        description="Provider for persistence agent"
+    )
+    
+    agent_reporter_provider: Optional[str] = Field(
+        default=None,
+        description="Provider for reporter agent"
+    )
+    
     # Application Settings
     config_path: Optional[Path] = Field(
         default=None,
@@ -223,6 +275,68 @@ class ShakkaConfig(BaseSettings):
         elif provider == "anthropic":
             return self.anthropic_api_key
         return None
+    
+    def get_agent_model(self, role: str) -> str:
+        """Get the configured model for a specific agent role.
+        
+        Args:
+            role: Agent role (orchestrator, recon, exploit, persistence, reporter)
+            
+        Returns:
+            Model name to use for the agent
+        """
+        role = role.lower()
+        
+        # Check for role-specific model first
+        role_model_map = {
+            "orchestrator": self.agent_orchestrator_model,
+            "recon": self.agent_recon_model,
+            "exploit": self.agent_exploit_model,
+            "persistence": self.agent_persistence_model,
+            "reporter": self.agent_reporter_model,
+        }
+        
+        # Get role-specific model, fall back to default
+        model = role_model_map.get(role)
+        if model is not None:
+            return model
+        
+        # Orchestrator has its own field that's always set
+        if role == "orchestrator":
+            return self.agent_orchestrator_model
+        
+        return self.agent_default_model
+    
+    def get_agent_provider(self, role: str) -> str:
+        """Get the configured provider for a specific agent role.
+        
+        Args:
+            role: Agent role (orchestrator, recon, exploit, persistence, reporter)
+            
+        Returns:
+            Provider name to use for the agent
+        """
+        role = role.lower()
+        
+        # Check for role-specific provider first
+        role_provider_map = {
+            "orchestrator": self.agent_orchestrator_provider,
+            "recon": self.agent_recon_provider,
+            "exploit": self.agent_exploit_provider,
+            "persistence": self.agent_persistence_provider,
+            "reporter": self.agent_reporter_provider,
+        }
+        
+        # Get role-specific provider
+        provider = role_provider_map.get(role)
+        if provider is not None:
+            return provider
+        
+        # Fall back to agent default provider, then global default
+        if self.agent_default_provider is not None:
+            return self.agent_default_provider
+        
+        return self.default_provider
     
     @classmethod
     def load_from_file(cls, config_path: Optional[Path] = None) -> "ShakkaConfig":

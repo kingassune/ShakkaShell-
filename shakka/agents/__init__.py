@@ -8,7 +8,13 @@ through an orchestrator.
 from .base import Agent, AgentConfig, AgentRole, AgentState, AgentResult
 from .message import AgentMessage, MessageType
 from .orchestrator import Orchestrator, TaskPlan, TaskStep
-from .roles import ReconAgent, ExploitAgent, PersistenceAgent, ReporterAgent
+from .roles import (
+    ReconAgent,
+    ExploitAgent,
+    PersistenceAgent,
+    ReporterAgent,
+    create_agent_from_config,
+)
 
 __all__ = [
     # Base
@@ -29,4 +35,6 @@ __all__ = [
     "ExploitAgent",
     "PersistenceAgent",
     "ReporterAgent",
+    # Factory
+    "create_agent_from_config",
 ]

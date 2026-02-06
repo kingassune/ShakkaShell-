@@ -7,9 +7,66 @@ Provides concrete agent implementations for:
 - Reporting
 """
 
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
 
 from .base import Agent, AgentConfig, AgentResult, AgentRole, AgentState
+
+if TYPE_CHECKING:
+    from shakka.config import ShakkaConfig
+
+
+def create_agent_from_config(
+    role: AgentRole,
+    shakka_config: "ShakkaConfig",
+    shared_memory=None,
+) -> Agent:
+    """Create an agent with model/provider settings from ShakkaConfig.
+    
+    This factory function reads the per-role model and provider configuration
+    and creates the appropriate agent with those settings.
+    
+    Args:
+        role: The agent role to create.
+        shakka_config: ShakkaConfig instance with agent model settings.
+        shared_memory: Optional shared memory store.
+        
+    Returns:
+        Configured agent instance.
+        
+    Example:
+        from shakka.config import ShakkaConfig
+        from shakka.agents.roles import create_agent_from_config
+        from shakka.agents.base import AgentRole
+        
+        config = ShakkaConfig()
+        recon_agent = create_agent_from_config(AgentRole.RECON, config)
+    """
+    role_name = role.value
+    model = shakka_config.get_agent_model(role_name)
+    provider = shakka_config.get_agent_provider(role_name)
+    
+    agent_config = AgentConfig(
+        role=role,
+        provider=provider,
+        model=model,
+        max_retries=shakka_config.agent_max_retries,
+        timeout_seconds=shakka_config.agent_timeout,
+        verbose=shakka_config.agent_verbose,
+        use_shared_memory=shared_memory is not None,
+    )
+    
+    agent_classes = {
+        AgentRole.RECON: ReconAgent,
+        AgentRole.EXPLOIT: ExploitAgent,
+        AgentRole.PERSISTENCE: PersistenceAgent,
+        AgentRole.REPORTER: ReporterAgent,
+    }
+    
+    agent_class = agent_classes.get(role)
+    if agent_class is None:
+        raise ValueError(f"Unsupported agent role: {role}")
+    
+    return agent_class(config=agent_config, shared_memory=shared_memory)
 
 
 class ReconAgent(Agent):

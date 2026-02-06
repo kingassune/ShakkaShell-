@@ -786,3 +786,150 @@ class TestShakkaConfigAgents:
         assert config.agent_enabled is False
         assert config.agent_verbose is True
         assert config.agent_max_retries == 5
+
+
+# =============================================================================
+# Agent Factory Tests
+# =============================================================================
+
+class TestCreateAgentFromConfig:
+    """Tests for create_agent_from_config factory function."""
+    
+    def test_factory_import(self):
+        """Test factory function is importable."""
+        from shakka.agents import create_agent_from_config
+        assert create_agent_from_config is not None
+    
+    def test_create_recon_agent_default_config(self):
+        """Test creating recon agent with default config."""
+        from shakka.config import ShakkaConfig
+        from shakka.agents import create_agent_from_config, AgentRole
+        
+        config = ShakkaConfig()
+        agent = create_agent_from_config(AgentRole.RECON, config)
+        
+        assert agent.role == AgentRole.RECON
+        assert agent.config.model == "gpt-4o"
+        assert agent.config.provider == "openai"
+    
+    def test_create_exploit_agent_default_config(self):
+        """Test creating exploit agent with default config."""
+        from shakka.config import ShakkaConfig
+        from shakka.agents import create_agent_from_config, AgentRole
+        
+        config = ShakkaConfig()
+        agent = create_agent_from_config(AgentRole.EXPLOIT, config)
+        
+        assert agent.role == AgentRole.EXPLOIT
+        assert isinstance(agent, ExploitAgent)
+    
+    def test_create_persistence_agent_default_config(self):
+        """Test creating persistence agent with default config."""
+        from shakka.config import ShakkaConfig
+        from shakka.agents import create_agent_from_config, AgentRole
+        
+        config = ShakkaConfig()
+        agent = create_agent_from_config(AgentRole.PERSISTENCE, config)
+        
+        assert agent.role == AgentRole.PERSISTENCE
+        assert isinstance(agent, PersistenceAgent)
+    
+    def test_create_reporter_agent_default_config(self):
+        """Test creating reporter agent with default config."""
+        from shakka.config import ShakkaConfig
+        from shakka.agents import create_agent_from_config, AgentRole
+        
+        config = ShakkaConfig()
+        agent = create_agent_from_config(AgentRole.REPORTER, config)
+        
+        assert agent.role == AgentRole.REPORTER
+        assert isinstance(agent, ReporterAgent)
+    
+    def test_create_agent_with_custom_model(self):
+        """Test creating agent with per-role model configuration."""
+        from shakka.config import ShakkaConfig
+        from shakka.agents import create_agent_from_config, AgentRole
+        
+        config = ShakkaConfig(
+            agent_recon_model="claude-sonnet-4",
+            agent_recon_provider="anthropic",
+        )
+        agent = create_agent_from_config(AgentRole.RECON, config)
+        
+        assert agent.config.model == "claude-sonnet-4"
+        assert agent.config.provider == "anthropic"
+    
+    def test_create_agent_with_custom_default_model(self):
+        """Test creating agent with custom default model."""
+        from shakka.config import ShakkaConfig
+        from shakka.agents import create_agent_from_config, AgentRole
+        
+        config = ShakkaConfig(agent_default_model="custom-model")
+        agent = create_agent_from_config(AgentRole.EXPLOIT, config)
+        
+        assert agent.config.model == "custom-model"
+    
+    def test_create_agent_inherits_config_settings(self):
+        """Test agent inherits settings from config."""
+        from shakka.config import ShakkaConfig
+        from shakka.agents import create_agent_from_config, AgentRole
+        
+        config = ShakkaConfig(
+            agent_max_retries=5,
+            agent_timeout=600,
+            agent_verbose=True,
+        )
+        agent = create_agent_from_config(AgentRole.RECON, config)
+        
+        assert agent.config.max_retries == 5
+        assert agent.config.timeout_seconds == 600
+        assert agent.config.verbose is True
+    
+    def test_create_agent_with_shared_memory(self):
+        """Test creating agent with shared memory."""
+        from shakka.config import ShakkaConfig
+        from shakka.agents import create_agent_from_config, AgentRole
+        from shakka.storage.memory import MemoryStore, MemoryConfig
+        
+        config = ShakkaConfig()
+        memory = MemoryStore(MemoryConfig(privacy_mode=True))
+        agent = create_agent_from_config(AgentRole.RECON, config, shared_memory=memory)
+        
+        assert agent.config.use_shared_memory is True
+    
+    def test_create_agent_unsupported_role_raises(self):
+        """Test unsupported role raises ValueError."""
+        from shakka.config import ShakkaConfig
+        from shakka.agents import create_agent_from_config, AgentRole
+        
+        config = ShakkaConfig()
+        
+        # ORCHESTRATOR role is not supported by the factory
+        with pytest.raises(ValueError, match="Unsupported agent role"):
+            create_agent_from_config(AgentRole.ORCHESTRATOR, config)
+    
+    def test_create_multiple_agents_different_roles(self):
+        """Test creating multiple agents with different configurations."""
+        from shakka.config import ShakkaConfig
+        from shakka.agents import create_agent_from_config, AgentRole
+        
+        config = ShakkaConfig(
+            agent_recon_model="claude-sonnet-4",
+            agent_recon_provider="anthropic",
+            agent_exploit_model="o1",
+            agent_exploit_provider="openai",
+            agent_default_model="gpt-4o-mini",
+        )
+        
+        recon = create_agent_from_config(AgentRole.RECON, config)
+        exploit = create_agent_from_config(AgentRole.EXPLOIT, config)
+        persistence = create_agent_from_config(AgentRole.PERSISTENCE, config)
+        
+        assert recon.config.model == "claude-sonnet-4"
+        assert recon.config.provider == "anthropic"
+        
+        assert exploit.config.model == "o1"
+        assert exploit.config.provider == "openai"
+        
+        # Persistence uses default
+        assert persistence.config.model == "gpt-4o-mini"
