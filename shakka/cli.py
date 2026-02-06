@@ -31,6 +31,7 @@ from shakka.mcp import (
     MCPHTTPTransport,
     HTTPTransportConfig,
 )
+from shakka.storage import MemoryStore, MemoryType
 from shakka.utils import display
 
 app = typer.Typer(
@@ -717,6 +718,226 @@ def mcp_command(
             display.print_info("\nMCP server stopped.")
         finally:
             http_transport.stop()
+
+
+@app.command(name="remember")
+def remember_command(
+    content: str = typer.Argument(
+        ...,
+        help="The memory content to store"
+    ),
+    target: Optional[str] = typer.Option(
+        None,
+        "--target",
+        "-t",
+        help="Target IP/hostname this memory relates to"
+    ),
+    memory_type: str = typer.Option(
+        "technique",
+        "--type",
+        "-T",
+        help="Memory type: session, target, technique, or failure"
+    ),
+):
+    """Store a memory for later recall.
+    
+    Memory types:
+      - session: Current engagement context
+      - target: Per-target findings
+      - technique: General attack patterns that worked
+      - failure: Approaches to avoid
+    
+    Examples:
+        shakka remember "SQLi on port 8080 worked with --dbs flag"
+        shakka remember "Port 22 open, SSH v7.4" --target 192.168.1.1
+        shakka remember "LDAP injection didn't work" --type failure
+    """
+    # Validate memory type
+    valid_types = ["session", "target", "technique", "failure"]
+    if memory_type.lower() not in valid_types:
+        display.print_error(f"Invalid memory type: {memory_type}")
+        display.print_info(f"Valid types: {', '.join(valid_types)}")
+        raise typer.Exit(code=1)
+    
+    try:
+        store = MemoryStore()
+        mem_type = MemoryType(memory_type.lower())
+        memory_id = store.remember(content, memory_type=mem_type, target=target)
+        
+        display.print_success(f"Memory stored (ID: {memory_id})")
+        if target:
+            display.console.print(f"  [dim]Target: {target}[/dim]")
+        display.console.print(f"  [dim]Type: {mem_type.value}[/dim]")
+        
+    except Exception as e:
+        display.print_error(f"Failed to store memory: {e}")
+        raise typer.Exit(code=1)
+
+
+@app.command(name="recall")
+def recall_command(
+    query: str = typer.Argument(
+        ...,
+        help="Natural language query to search memories"
+    ),
+    target: Optional[str] = typer.Option(
+        None,
+        "--target",
+        "-t",
+        help="Filter memories by target"
+    ),
+    memory_type: Optional[str] = typer.Option(
+        None,
+        "--type",
+        "-T",
+        help="Filter by memory type: session, target, technique, or failure"
+    ),
+    limit: int = typer.Option(
+        10,
+        "--limit",
+        "-n",
+        help="Maximum number of results to return"
+    ),
+):
+    """Recall memories matching a query.
+    
+    Uses semantic search to find relevant memories from past sessions.
+    
+    Examples:
+        shakka recall "What worked on this target?"
+        shakka recall "SQL injection" --target 192.168.1.1
+        shakka recall "exploitation techniques" --type technique --limit 5
+    """
+    # Validate memory type if provided
+    mem_type = None
+    if memory_type:
+        valid_types = ["session", "target", "technique", "failure"]
+        if memory_type.lower() not in valid_types:
+            display.print_error(f"Invalid memory type: {memory_type}")
+            display.print_info(f"Valid types: {', '.join(valid_types)}")
+            raise typer.Exit(code=1)
+        mem_type = MemoryType(memory_type.lower())
+    
+    try:
+        store = MemoryStore()
+        result = store.recall(
+            query=query,
+            memory_type=mem_type,
+            target=target,
+            limit=limit,
+        )
+        
+        if not result.found:
+            display.print_info("No relevant memories found.")
+            raise typer.Exit(code=0)
+        
+        # Display results in a table
+        table = Table(
+            title=f"Memories matching: \"{query}\"",
+            show_lines=True,
+        )
+        table.add_column("ID", style="dim", width=12)
+        table.add_column("Type", style="cyan", width=10)
+        table.add_column("Content", style="white")
+        table.add_column("Target", style="yellow", width=15)
+        table.add_column("Recorded", style="dim", width=20)
+        
+        for entry in result.entries:
+            table.add_row(
+                entry.id,
+                entry.memory_type.value,
+                entry.content[:100] + ("..." if len(entry.content) > 100 else ""),
+                entry.target or "-",
+                entry.timestamp[:19] if entry.timestamp else "-",
+            )
+        
+        display.console.print(table)
+        display.console.print(f"\n[dim]Found {len(result.entries)} memories[/dim]")
+        
+    except typer.Exit:
+        raise
+    except Exception as e:
+        display.print_error(f"Failed to recall memories: {e}")
+        raise typer.Exit(code=1)
+
+
+@app.command(name="forget")
+def forget_command(
+    target: Optional[str] = typer.Option(
+        None,
+        "--target",
+        "-t",
+        help="Delete all memories for this target"
+    ),
+    memory_type: Optional[str] = typer.Option(
+        None,
+        "--type",
+        "-T",
+        help="Delete all memories of this type"
+    ),
+    memory_id: Optional[str] = typer.Option(
+        None,
+        "--id",
+        "-i",
+        help="Delete a specific memory by ID"
+    ),
+    all_memories: bool = typer.Option(
+        False,
+        "--all",
+        "-a",
+        help="Delete ALL memories (use with caution)"
+    ),
+):
+    """Delete stored memories.
+    
+    At least one filter option must be specified unless using --all.
+    
+    Examples:
+        shakka forget --target 192.168.1.1
+        shakka forget --type failure
+        shakka forget --id mem_000001
+        shakka forget --all
+    """
+    # Validate memory type if provided
+    mem_type = None
+    if memory_type:
+        valid_types = ["session", "target", "technique", "failure"]
+        if memory_type.lower() not in valid_types:
+            display.print_error(f"Invalid memory type: {memory_type}")
+            display.print_info(f"Valid types: {', '.join(valid_types)}")
+            raise typer.Exit(code=1)
+        mem_type = MemoryType(memory_type.lower())
+    
+    # Require at least one option
+    if not any([target, memory_type, memory_id, all_memories]):
+        display.print_error("Must specify at least one of: --target, --type, --id, or --all")
+        raise typer.Exit(code=1)
+    
+    try:
+        store = MemoryStore()
+        
+        if all_memories:
+            if not display.confirm("Are you sure you want to delete ALL memories?", default=False):
+                display.print_info("Cancelled")
+                raise typer.Exit(code=0)
+            deleted = store.clear()
+        else:
+            deleted = store.forget(
+                target=target,
+                memory_type=mem_type,
+                memory_id=memory_id,
+            )
+        
+        if deleted > 0:
+            display.print_success(f"Deleted {deleted} memory(ies)")
+        else:
+            display.print_info("No memories matched the criteria")
+        
+    except typer.Exit:
+        raise
+    except Exception as e:
+        display.print_error(f"Failed to delete memories: {e}")
+        raise typer.Exit(code=1)
 
 
 if __name__ == "__main__":
