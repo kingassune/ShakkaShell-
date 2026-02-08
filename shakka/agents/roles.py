@@ -117,14 +117,20 @@ class ReconAgent(Agent):
         """
         import re
         
-        # Match IP addresses
-        ip_pattern = r'\b(?:\d{1,3}\.){3}\d{1,3}(?:/\d{1,2})?\b'
+        # Match IP addresses (with optional port)
+        ip_pattern = r'\b(?:\d{1,3}\.){3}\d{1,3}(?::\d+)?(?:/\d{1,2})?\b'
         ip_match = re.search(ip_pattern, task)
         if ip_match:
             return ip_match.group()
         
-        # Match hostnames/domains
-        domain_pattern = r'\b(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}\b'
+        # Match localhost (with optional port)
+        localhost_pattern = r'\blocalhost(?::\d+)?\b'
+        localhost_match = re.search(localhost_pattern, task, re.IGNORECASE)
+        if localhost_match:
+            return localhost_match.group()
+        
+        # Match hostnames/domains (with optional port)
+        domain_pattern = r'\b(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}(?::\d+)?\b'
         domain_match = re.search(domain_pattern, task)
         if domain_match:
             return domain_match.group()
