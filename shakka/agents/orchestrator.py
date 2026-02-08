@@ -13,13 +13,16 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
-from typing import Optional, TYPE_CHECKING
+from typing import Optional, TYPE_CHECKING, Callable
 
 from .base import Agent, AgentConfig, AgentResult, AgentRole, AgentState
 from .message import AgentMessage, MessageQueue, MessageType
 
 if TYPE_CHECKING:
     from shakka.config import ShakkaConfig
+
+# Type alias for progress callback: (step_id, description, agent_role, result_or_none)
+ProgressCallback = Callable[[str, str, str, Optional[AgentResult]], None]
 
 
 class StepStatus(str, Enum):
@@ -564,6 +567,116 @@ class Orchestrator(Agent):
             tokens_used=total_tokens,
         )
     
+    async def execute_with_progress(
+        self,
+        task: str,
+        context: Optional[dict] = None,
+        on_step_start: Optional[ProgressCallback] = None,
+        on_step_complete: Optional[ProgressCallback] = None,
+    ) -> AgentResult:
+        """Execute orchestration with progress callbacks for live updates.
+        
+        Same as execute() but with callbacks for real-time progress display.
+        
+        Args:
+            task: Task description.
+            context: Optional context.
+            on_step_start: Called when step starts (step_id, description, agent_role, None).
+            on_step_complete: Called when step completes (step_id, description, agent_role, result).
+            
+        Returns:
+            Aggregated result from all agents.
+        """
+        # Create execution plan
+        self._set_state(AgentState.PLANNING)
+        plan = self.create_plan(task)
+        
+        self._log_event("plan_created", {
+            "plan_id": plan.plan_id,
+            "steps": len(plan.steps),
+        })
+        
+        # Execute plan
+        self._set_state(AgentState.EXECUTING)
+        results: list[AgentResult] = []
+        
+        while not plan.is_complete and not self._interrupted:
+            ready_steps = plan.get_ready_steps()
+            
+            if not ready_steps:
+                if any(s.status == StepStatus.PENDING for s in plan.steps):
+                    break
+                break
+            
+            for step in ready_steps:
+                if self._interrupted:
+                    break
+                
+                step.status = StepStatus.IN_PROGRESS
+                
+                # Call start callback
+                if on_step_start:
+                    on_step_start(step.step_id, step.description, step.assigned_agent.value, None)
+                
+                agent = self._agents.get(step.assigned_agent)
+                if agent is None:
+                    step.status = StepStatus.SKIPPED
+                    self._log_event("step_skipped", {
+                        "step_id": step.step_id,
+                        "reason": f"No agent for role {step.assigned_agent.value}",
+                    })
+                    if on_step_complete:
+                        skip_result = AgentResult(success=False, output=f"Skipped: No agent for {step.assigned_agent.value}")
+                        on_step_complete(step.step_id, step.description, step.assigned_agent.value, skip_result)
+                    continue
+                
+                # Build context from previous results
+                step_context = context.copy() if context else {}
+                step_context["previous_results"] = [r.to_dict() for r in results]
+                step_context["plan"] = plan.to_dict()
+                
+                # Execute step
+                result = await agent.run(step.description, step_context)
+                results.append(result)
+                
+                plan.mark_step_complete(step.step_id, result)
+                
+                # Call complete callback
+                if on_step_complete:
+                    on_step_complete(step.step_id, step.description, step.assigned_agent.value, result)
+                
+                self._log_event("step_completed", {
+                    "step_id": step.step_id,
+                    "success": result.success,
+                })
+                
+                # Handle failure with retry
+                if not result.success and step.can_retry:
+                    step.retry_count += 1
+                    step.status = StepStatus.PENDING
+                    self._log_event("step_retry", {
+                        "step_id": step.step_id,
+                        "attempt": step.retry_count,
+                    })
+        
+        # Store plan in history
+        self._plan_history.append(plan)
+        
+        # Aggregate results
+        all_success = all(r.success for r in results)
+        all_output = "\n\n".join(f"[{i+1}] {r.output}" for i, r in enumerate(results) if r.output)
+        total_tokens = sum(r.tokens_used for r in results)
+        
+        return AgentResult(
+            success=all_success,
+            output=all_output or "Task completed",
+            data={
+                "plan": plan.to_dict(),
+                "step_results": [r.to_dict() for r in results],
+            },
+            tokens_used=total_tokens,
+        )
+
     async def orchestrate(
         self,
         objective: str,

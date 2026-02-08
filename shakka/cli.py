@@ -279,13 +279,18 @@ def config_command(
     display.print_info("Use --show to view configuration or --set-provider to change provider")
 
 
-def _run_agent_mode(objective: str, config: ShakkaConfig) -> None:
-    """Run multi-agent orchestration for complex tasks.
+def _run_agent_mode(objective: str, config: ShakkaConfig, output_file: Optional[str] = None) -> None:
+    """Run multi-agent orchestration for complex tasks with live progress.
     
     Args:
         objective: The high-level task to accomplish.
         config: ShakkaConfig instance.
+        output_file: Optional path to save the report.
     """
+    from rich.live import Live
+    from datetime import datetime
+    import json
+    
     display.print_info("Initializing multi-agent orchestration...")
     display.console.print()
     
@@ -330,12 +335,74 @@ def _run_agent_mode(objective: str, config: ShakkaConfig) -> None:
     display.console.print(plan.format_plan())
     display.console.print()
     
-    # Execute the plan
-    display.print_info("Executing plan...")
+    # Track step status for live display
+    step_status = {step.step_id: {
+        "step_id": step.step_id,
+        "description": step.description,
+        "assigned_agent": step.assigned_agent.value,
+        "status": "pending",
+        "result": None,
+    } for step in plan.steps}
+    
+    current_step_id = None
+    step_outputs = []
+    
+    def on_step_start(step_id: str, desc: str, agent: str, _):
+        nonlocal current_step_id
+        current_step_id = step_id
+        step_status[step_id]["status"] = "in_progress"
+    
+    def on_step_complete(step_id: str, desc: str, agent: str, result):
+        step_status[step_id]["status"] = "completed" if result and result.success else "failed"
+        step_status[step_id]["result"] = result
+        if result:
+            step_outputs.append({
+                "step_id": step_id,
+                "agent": agent,
+                "success": result.success,
+                "output": result.output,
+                "data": result.data,
+            })
+    
+    display.print_info("Executing plan with live progress...")
     display.console.print()
     
     try:
-        result = asyncio.run(orchestrator.execute(objective))
+        # Run with live progress display
+        async def run_with_live_progress():
+            with Live(
+                display.create_live_progress_table(objective, list(step_status.values()), current_step_id),
+                refresh_per_second=4,
+                console=display.console,
+            ) as live:
+                # Wrap callbacks to update live display
+                def start_callback(step_id, desc, agent, _):
+                    on_step_start(step_id, desc, agent, _)
+                    live.update(display.create_live_progress_table(objective, list(step_status.values()), step_id))
+                
+                def complete_callback(step_id, desc, agent, result):
+                    on_step_complete(step_id, desc, agent, result)
+                    live.update(display.create_live_progress_table(objective, list(step_status.values()), None))
+                    # Show step output immediately
+                    if result:
+                        live.console.print()
+                        display.print_step_result(
+                            step_num=list(step_status.keys()).index(step_id) + 1,
+                            agent=agent,
+                            output=result.output,
+                            success=result.success,
+                            show_full=False
+                        )
+                
+                return await orchestrator.execute_with_progress(
+                    objective,
+                    on_step_start=start_callback,
+                    on_step_complete=complete_callback,
+                )
+        
+        result = asyncio.run(run_with_live_progress())
+        
+        display.console.print()
         
         # Display results
         if result.success:
@@ -345,7 +412,7 @@ def _run_agent_mode(objective: str, config: ShakkaConfig) -> None:
         
         display.console.print()
         
-        # Show step results
+        # Show detailed step results
         if result.data and "step_results" in result.data:
             display.console.print("[bold]Step Results:[/bold]")
             for i, step_result in enumerate(result.data["step_results"], 1):
@@ -355,13 +422,58 @@ def _run_agent_mode(objective: str, config: ShakkaConfig) -> None:
         
         display.console.print()
         
-        # Show final output
+        # Show final output in panel
         if result.output:
             display.console.print(Panel(
                 result.output,
                 title="[bold]Agent Output[/bold]",
                 border_style="blue",
             ))
+        
+        # Extract and display full report if available
+        if result.data and "step_results" in result.data:
+            for step_result in result.data["step_results"]:
+                data = step_result.get("data", {})
+                if "report" in data:
+                    display.print_agent_report(data["report"], objective)
+                    break
+        
+        # Save report to file if requested
+        report_saved = False
+        if output_file or config.debug:
+            # Auto-generate filename if not provided
+            if not output_file:
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                safe_objective = "".join(c if c.isalnum() else "_" for c in objective[:30])
+                output_file = f"report_{safe_objective}_{timestamp}.json"
+            
+            # Compile full report
+            full_report = {
+                "objective": objective,
+                "timestamp": datetime.now().isoformat(),
+                "success": result.success,
+                "total_tokens": result.tokens_used,
+                "steps": result.data.get("step_results", []) if result.data else [],
+                "plan": result.data.get("plan", {}) if result.data else {},
+            }
+            
+            # Extract structured report data
+            if result.data and "step_results" in result.data:
+                for step_result in result.data["step_results"]:
+                    data = step_result.get("data", {})
+                    if "report" in data:
+                        full_report["structured_report"] = data["report"]
+                        break
+            
+            from pathlib import Path
+            report_path = Path(output_file)
+            report_path.parent.mkdir(parents=True, exist_ok=True)
+            
+            with open(report_path, "w") as f:
+                json.dump(full_report, f, indent=2, default=str)
+            
+            display.print_success(f"Report saved to: {report_path}")
+            report_saved = True
         
         # Show plan status
         final_plan = result.data.get("plan", {}) if result.data else {}
@@ -372,11 +484,19 @@ def _run_agent_mode(objective: str, config: ShakkaConfig) -> None:
                 f"\n[dim]Plan Status: {status} ({progress:.0f}% complete)[/dim]"
             )
         
+        # Prompt to save if not saved
+        if not report_saved:
+            display.console.print()
+            display.console.print("[dim]Tip: Use --output FILE to save the report, or set debug=true in config[/dim]")
+        
     except KeyboardInterrupt:
         display.print_warning("\nAgent execution interrupted by user.")
         raise typer.Exit(code=130)
     except Exception as e:
         display.print_error(f"Agent execution failed: {e}")
+        if config.debug:
+            import traceback
+            display.console.print(f"[dim]{traceback.format_exc()}[/dim]")
         raise typer.Exit(code=1)
 
 
@@ -425,6 +545,18 @@ def agent(
         ...,
         help="The complex task to accomplish using multi-agent orchestration"
     ),
+    output: Optional[str] = typer.Option(
+        None,
+        "--output",
+        "-o",
+        help="Save report to file (JSON format)"
+    ),
+    verbose: bool = typer.Option(
+        False,
+        "--verbose",
+        "-v",
+        help="Show detailed step outputs as they complete"
+    ),
 ):
     """Run multi-agent orchestration for complex security tasks.
     
@@ -432,13 +564,20 @@ def agent(
     Persistence, Reporter) coordinated by an orchestrator to complete
     complex, multi-step security assessments.
     
+    Features:
+    - Live progress display showing each agent's status
+    - Full report display with findings and recommendations
+    - Optional report saving to JSON file
+    
     Examples:
         shakka agent "Full recon and initial access assessment on target.com"
-        shakka agent "Scan network 192.168.1.0/24 and identify vulnerabilities"
-        shakka agent "Perform comprehensive security audit and generate report"
+        shakka agent "Scan network 192.168.1.0/24 and identify vulnerabilities" -o report.json
+        shakka agent "Perform comprehensive security audit and generate report" --verbose
     """
     config = ShakkaConfig()
-    _run_agent_mode(objective, config)
+    if verbose:
+        config.agent_verbose = True
+    _run_agent_mode(objective, config, output_file=output)
 
 
 @app.command(name="exploit")

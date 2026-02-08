@@ -120,7 +120,7 @@ class TestAgentCommand:
         with patch("shakka.cli.Orchestrator") as MockOrchestrator:
             mock_orch = MockOrchestrator.return_value
             mock_orch.create_plan.return_value = self._mock_plan()
-            mock_orch.execute = AsyncMock(return_value=self._mock_result())
+            mock_orch.execute_with_progress = AsyncMock(return_value=self._mock_result())
             mock_orch.register_agent = lambda x: None
             
             result = runner.invoke(app, ["agent", "scan target.com"])
@@ -132,7 +132,7 @@ class TestAgentCommand:
         with patch("shakka.cli.Orchestrator") as MockOrchestrator:
             mock_orch = MockOrchestrator.return_value
             mock_orch.create_plan.return_value = self._mock_plan()
-            mock_orch.execute = AsyncMock(return_value=self._mock_result())
+            mock_orch.execute_with_progress = AsyncMock(return_value=self._mock_result())
             mock_orch.register_agent = lambda x: None
             
             result = runner.invoke(app, ["agent", "recon on 192.168.1.0/24"])
@@ -143,7 +143,7 @@ class TestAgentCommand:
         with patch("shakka.cli.Orchestrator") as MockOrchestrator:
             mock_orch = MockOrchestrator.return_value
             mock_orch.create_plan.return_value = self._mock_plan()
-            mock_orch.execute = AsyncMock(return_value=self._mock_result())
+            mock_orch.execute_with_progress = AsyncMock(return_value=self._mock_result())
             mock_orch.register_agent = lambda x: None
             
             result = runner.invoke(app, ["generate", "--agent", "complex task"])
@@ -163,7 +163,7 @@ class TestAgentCommand:
         with patch("shakka.cli.Orchestrator") as MockOrchestrator:
             mock_orch = MockOrchestrator.return_value
             mock_orch.create_plan.return_value = self._mock_plan()
-            mock_orch.execute = AsyncMock(return_value=self._mock_result())
+            mock_orch.execute_with_progress = AsyncMock(return_value=self._mock_result())
             mock_orch.register_agent = lambda x: None
             
             result = runner.invoke(app, ["agent", "test objective"])
@@ -175,7 +175,7 @@ class TestAgentCommand:
         with patch("shakka.cli.Orchestrator") as MockOrchestrator:
             mock_orch = MockOrchestrator.return_value
             mock_orch.create_plan.return_value = self._mock_plan()
-            mock_orch.execute = AsyncMock(return_value=self._mock_result(success=True))
+            mock_orch.execute_with_progress = AsyncMock(return_value=self._mock_result(success=True))
             mock_orch.register_agent = lambda x: None
             
             result = runner.invoke(app, ["agent", "test objective"])
@@ -186,7 +186,7 @@ class TestAgentCommand:
         with patch("shakka.cli.Orchestrator") as MockOrchestrator:
             mock_orch = MockOrchestrator.return_value
             mock_orch.create_plan.return_value = self._mock_plan()
-            mock_orch.execute = AsyncMock(return_value=self._mock_result(success=False))
+            mock_orch.execute_with_progress = AsyncMock(return_value=self._mock_result(success=False))
             mock_orch.register_agent = lambda x: None
             
             result = runner.invoke(app, ["agent", "test objective"])
@@ -198,7 +198,7 @@ class TestAgentCommand:
         with patch("shakka.cli.Orchestrator") as MockOrchestrator:
             mock_orch = MockOrchestrator.return_value
             mock_orch.create_plan.return_value = self._mock_plan()
-            mock_orch.execute = AsyncMock(return_value=self._mock_result())
+            mock_orch.execute_with_progress = AsyncMock(return_value=self._mock_result())
             mock_orch.register_agent = lambda x: None
             
             result = runner.invoke(app, ["agent", "test task"])
