@@ -4,15 +4,15 @@ ShakkaShell v2 features a multi-agent orchestration system for complex, multi-st
 
 ## Overview
 
-The agent system consists of specialized agents coordinated by an Orchestrator:
+The agent system uses **LLM-powered analysis** for intelligent, context-aware security assessments. Each agent has a specialized prompt and uses the configured LLM provider for reasoning.
 
-| Agent | Role | Specialty |
+| Agent | Role | LLM Usage |
 |-------|------|-----------|
-| **Orchestrator** | Task planning, coordination | Breaking down complex goals |
-| **Recon Agent** | Reconnaissance | Enumeration, OSINT, service detection |
-| **Exploit Agent** | Exploitation | Vulnerability analysis, payload selection |
-| **Persistence Agent** | Post-exploitation | Maintaining access, privilege escalation |
-| **Reporter Agent** | Documentation | Findings, evidence, report generation |
+| **Orchestrator** | Task planning, coordination | Generates attack plans dynamically |
+| **Recon Agent** | Reconnaissance | Analyzes scan results, identifies targets |
+| **Exploit Agent** | Exploitation | Suggests exploits, generates payloads |
+| **Persistence Agent** | Post-exploitation | Recommends persistence mechanisms |
+| **Reporter Agent** | Documentation | Summarizes findings, generates reports |
 
 ## Architecture
 
@@ -53,15 +53,19 @@ shakka agent --max-steps 5 "Quick scan of 192.168.1.0/24"
 
 ```python
 from shakka.agents import Orchestrator, ReconAgent, ExploitAgent
+from shakka.config import ShakkaConfig
 
-# Create orchestrator
-orchestrator = Orchestrator()
+# Configure LLM provider (uses environment variables by default)
+config = ShakkaConfig(default_provider="openrouter")
 
-# Add specialized agents
-orchestrator.add_agent(ReconAgent())
-orchestrator.add_agent(ExploitAgent())
+# Create orchestrator with LLM integration
+orchestrator = Orchestrator(shakka_config=config)
 
-# Execute task
+# Add specialized agents (each uses LLM for analysis)
+orchestrator.add_agent(ReconAgent(shakka_config=config))
+orchestrator.add_agent(ExploitAgent(shakka_config=config))
+
+# Execute task - agents use LLM for intelligent analysis
 result = await orchestrator.execute(
     "Full assessment of target.com"
 )
@@ -69,6 +73,21 @@ result = await orchestrator.execute(
 # Access results
 for step in result.steps:
     print(f"{step.agent}: {step.output}")
+```
+
+### Direct Agent Usage
+
+```python
+from shakka.agents.roles import ReconAgent, ExploitAgent
+from shakka.config import ShakkaConfig
+
+# Initialize with config
+config = ShakkaConfig(default_provider="anthropic")
+agent = ReconAgent(shakka_config=config)
+
+# Execute with LLM analysis
+result = await agent.execute("Analyze web application at 192.168.1.100")
+print(result.findings)  # LLM-generated analysis
 ```
 
 ## Agent Communication
@@ -107,15 +126,35 @@ plan = TaskPlan(
 
 ## Configuration
 
+Each agent uses the configured LLM provider for intelligent analysis. You can customize models per agent:
+
 ```yaml
 # config.yaml
 agents:
   max_iterations: 10
   timeout: 300  # seconds
   model_overrides:
-    orchestrator: claude-sonnet-4
-    recon: gpt-4o
-    exploit: o1
+    orchestrator: claude-sonnet-4  # Best for planning
+    recon: gpt-4o                  # Fast enumeration
+    exploit: o1                    # Deep reasoning for exploits
+
+# LLM Provider (used by all agents)
+default_provider: openrouter
+openrouter_model: deepseek/deepseek-chat  # Cost-effective default
+```
+
+### Provider Selection
+
+```python
+from shakka.config import ShakkaConfig
+from shakka.agents.roles import ExploitAgent
+
+# Use specific provider for agent
+config = ShakkaConfig(
+    default_provider="openrouter",
+    openrouter_model="anthropic/claude-3.5-sonnet"  # Premium for exploit analysis
+)
+agent = ExploitAgent(shakka_config=config)
 ```
 
 ## Example Output

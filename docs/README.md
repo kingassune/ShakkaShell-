@@ -1,6 +1,11 @@
 # ShakkaShell v2.0 Documentation
 
-Welcome to ShakkaShell v2.0, a state-of-the-art autonomous offensive security platform.
+Welcome to ShakkaShell v2.0, a state-of-the-art autonomous offensive security platform featuring:
+
+- **Multiple LLM Providers**: OpenAI, Anthropic, OpenRouter (200+ models), Ollama
+- **Real API Integrations**: Live NVD, Exploit-DB, and GitHub APIs for CVE lookups
+- **LLM-Powered Agents**: Multi-agent orchestration with intelligent analysis
+- **960 tests passing** with comprehensive coverage
 
 ## Getting Started
 
@@ -29,14 +34,18 @@ Welcome to ShakkaShell v2.0, a state-of-the-art autonomous offensive security pl
 ## Quick Example
 
 ```bash
+# Configure provider (OpenRouter recommended)
+export OPENROUTER_API_KEY="sk-or-v1-..."
+export SHAKKA_DEFAULT_PROVIDER="openrouter"
+
 # Basic command generation
 shakka generate "scan ports on 10.0.0.1"
 
-# Multi-agent mode
+# Multi-agent mode (LLM-powered)
 shakka agent "Full recon on target.com"
 
-# CVE exploit lookup
-shakka exploit CVE-2024-1234
+# CVE exploit lookup (real NVD/GitHub/Exploit-DB APIs)
+shakka exploit CVE-2021-44228  # Returns CVSS 10.0, PoC repos, etc.
 
 # MCP server mode
 shakka --mcp --port 3000

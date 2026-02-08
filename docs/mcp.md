@@ -4,7 +4,11 @@ ShakkaShell can run as an MCP (Model Context Protocol) server, enabling integrat
 
 ## Overview
 
-MCP is a standardized protocol for AI tool integration, adopted by OpenAI, Anthropic, and Google. ShakkaShell exposes its capabilities as MCP tools.
+MCP is a standardized protocol for AI tool integration, adopted by OpenAI, Anthropic, and Google. ShakkaShell exposes its capabilities as MCP tools, including:
+
+- **Real-time command generation** via configured LLM provider (OpenAI, Anthropic, OpenRouter, Ollama)
+- **Live CVE lookups** via NVD, Exploit-DB, and GitHub APIs
+- **Multi-agent orchestration** for complex security tasks
 
 ## Exposed Tools
 
