@@ -13,10 +13,13 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
 
 from .base import Agent, AgentConfig, AgentResult, AgentRole, AgentState
 from .message import AgentMessage, MessageQueue, MessageType
+
+if TYPE_CHECKING:
+    from shakka.config import ShakkaConfig
 
 
 class StepStatus(str, Enum):
@@ -339,12 +342,14 @@ class Orchestrator(Agent):
         self,
         config: Optional[AgentConfig] = None,
         shared_memory=None,
+        shakka_config: Optional["ShakkaConfig"] = None,
     ):
         """Initialize the orchestrator.
         
         Args:
             config: Agent configuration.
             shared_memory: Optional shared memory store.
+            shakka_config: Optional ShakkaConfig for provider settings.
         """
         # Force orchestrator role
         if config is None:
@@ -352,7 +357,7 @@ class Orchestrator(Agent):
         else:
             config.role = AgentRole.ORCHESTRATOR
         
-        super().__init__(config, shared_memory)
+        super().__init__(config, shared_memory, shakka_config)
         
         self._agents: dict[AgentRole, Agent] = {}
         self._message_queue = MessageQueue()

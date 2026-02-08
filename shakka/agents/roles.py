@@ -67,7 +67,7 @@ def create_agent_from_config(
     if agent_class is None:
         raise ValueError(f"Unsupported agent role: {role}")
     
-    return agent_class(config=agent_config, shared_memory=shared_memory)
+    return agent_class(config=agent_config, shared_memory=shared_memory, shakka_config=shakka_config)
 
 
 class ReconAgent(Agent):

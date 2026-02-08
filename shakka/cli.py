@@ -20,6 +20,7 @@ from shakka.agents import (
     ExploitAgent,
     PersistenceAgent,
     ReporterAgent,
+    create_agent_from_config,
 )
 from shakka.exploit import (
     ExploitPipeline,
@@ -292,17 +293,22 @@ def _run_agent_mode(objective: str, config: ShakkaConfig) -> None:
     orchestrator = Orchestrator(
         config=AgentConfig(
             role=AgentRole.ORCHESTRATOR,
+            provider=config.get_agent_provider("orchestrator"),
             use_shared_memory=True,
-        )
+        ),
+        shakka_config=config,
     )
     
-    # Create and register specialized agents
-    agents = {
-        AgentRole.RECON: ReconAgent(),
-        AgentRole.EXPLOIT: ExploitAgent(),
-        AgentRole.PERSISTENCE: PersistenceAgent(),
-        AgentRole.REPORTER: ReporterAgent(),
-    }
+    # Create and register specialized agents using factory function
+    agent_roles = [
+        AgentRole.RECON,
+        AgentRole.EXPLOIT,
+        AgentRole.PERSISTENCE,
+        AgentRole.REPORTER,
+    ]
+    agents = {}
+    for role in agent_roles:
+        agents[role] = create_agent_from_config(role, config)
     
     for role, agent in agents.items():
         orchestrator.register_agent(agent)
