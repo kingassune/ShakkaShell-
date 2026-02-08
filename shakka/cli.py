@@ -279,19 +279,22 @@ def config_command(
     display.print_info("Use --show to view configuration or --set-provider to change provider")
 
 
-def _run_agent_mode(objective: str, config: ShakkaConfig, output_file: Optional[str] = None) -> None:
+def _run_agent_mode(objective: str, config: ShakkaConfig, output_file: Optional[str] = None, auto_exploit: bool = False) -> None:
     """Run multi-agent orchestration for complex tasks with live progress.
     
     Args:
         objective: The high-level task to accomplish.
         config: ShakkaConfig instance.
         output_file: Optional path to save the report.
+        auto_exploit: Whether to attempt automatic exploitation.
     """
     from rich.live import Live
     from datetime import datetime
     import json
     
     display.print_info("Initializing multi-agent orchestration...")
+    if auto_exploit:
+        display.print_warning("Auto-exploitation enabled - will attempt to exploit discovered vulnerabilities")
     display.console.print()
     
     # Create orchestrator with agent config
@@ -396,6 +399,7 @@ def _run_agent_mode(objective: str, config: ShakkaConfig, output_file: Optional[
                 
                 return await orchestrator.execute_with_progress(
                     objective,
+                    context={"auto_exploit": auto_exploit},
                     on_step_start=start_callback,
                     on_step_complete=complete_callback,
                 )
@@ -557,6 +561,12 @@ def agent(
         "-v",
         help="Show detailed step outputs as they complete"
     ),
+    exploit: bool = typer.Option(
+        False,
+        "--exploit",
+        "-e",
+        help="Attempt to automatically exploit discovered vulnerabilities (use with caution)"
+    ),
 ):
     """Run multi-agent orchestration for complex security tasks.
     
@@ -568,16 +578,18 @@ def agent(
     - Live progress display showing each agent's status
     - Full report display with findings and recommendations
     - Optional report saving to JSON file
+    - Optional auto-exploitation with --exploit flag
     
     Examples:
         shakka agent "Full recon and initial access assessment on target.com"
         shakka agent "Scan network 192.168.1.0/24 and identify vulnerabilities" -o report.json
         shakka agent "Perform comprehensive security audit and generate report" --verbose
+        shakka agent --exploit "Exploit vulnerabilities on 192.168.1.1"
     """
     config = ShakkaConfig()
     if verbose:
         config.agent_verbose = True
-    _run_agent_mode(objective, config, output_file=output)
+    _run_agent_mode(objective, config, output_file=output, auto_exploit=exploit)
 
 
 @app.command(name="exploit")

