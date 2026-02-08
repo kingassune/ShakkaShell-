@@ -532,6 +532,13 @@ Only output the JSON array, no other text."""
         Returns:
             Dict with exploitation results.
         """
+        from rich.console import Console
+        from rich.panel import Panel
+        from rich.syntax import Syntax
+        
+        console = Console()
+        verbose = self.config.verbose
+        
         results = {
             "attempted": [],
             "successful": [],
@@ -539,6 +546,16 @@ Only output the JSON array, no other text."""
             "shells_obtained": [],
             "data_obtained": [],
         }
+        
+        if verbose:
+            console.print()
+            console.print(Panel(
+                f"[bold cyan]Target:[/bold cyan] {target}\n"
+                f"[bold cyan]Vulnerabilities:[/bold cyan] {len(vulnerabilities)}\n"
+                f"[bold cyan]Generating exploit commands...[/bold cyan]",
+                title="[bold red]🔥 EXPLOITATION PHASE[/bold red]",
+                border_style="red",
+            ))
         
         # Generate dynamic exploit commands using LLM
         exploit_commands = await self._generate_exploit_commands(
@@ -551,14 +568,19 @@ Only output the JSON array, no other text."""
         
         if not exploit_commands:
             # Fallback to basic enumeration if LLM fails
+            if verbose:
+                console.print("[yellow]LLM generation failed, using fallback commands...[/yellow]")
             exploit_commands = self._get_fallback_commands(target, ports)
+        
+        if verbose:
+            console.print(f"\n[bold]📋 {len(exploit_commands)} exploit commands to execute:[/bold]\n")
         
         self._log_event("exploitation_started", {
             "target": target,
             "commands_to_try": len(exploit_commands),
         })
         
-        for cmd_info in exploit_commands:
+        for idx, cmd_info in enumerate(exploit_commands, 1):
             command = cmd_info.get("command", "")
             description = cmd_info.get("description", "Unknown exploit")
             service = cmd_info.get("service", "unknown")
@@ -572,7 +594,17 @@ Only output the JSON array, no other text."""
             # Safety check - skip obviously dangerous commands
             if self._is_dangerous_command(command):
                 self._log_event("dangerous_command_skipped", {"command": command})
+                if verbose:
+                    console.print(f"  [dim]⏭️  Skipping dangerous command[/dim]")
                 continue
+            
+            if verbose:
+                console.print(f"[bold cyan]━━━ Exploit {idx}/{len(exploit_commands)} ━━━[/bold cyan]")
+                console.print(f"  [bold]Description:[/bold] {description}")
+                console.print(f"  [bold]Service:[/bold] {service}:{port}")
+                console.print(f"  [bold]Command:[/bold]")
+                console.print(Syntax(command, "bash", theme="monokai", line_numbers=False, word_wrap=True))
+                console.print(f"  [dim]Executing (timeout: {timeout}s)...[/dim]")
             
             exploit_attempt = {
                 "command": command,
@@ -610,6 +642,24 @@ Only output the JSON array, no other text."""
                         exploit_attempt["success"] = True
                         break
                 
+                # Display result in verbose mode
+                if verbose:
+                    if exploit_attempt["success"]:
+                        console.print(f"  [bold green]✅ SUCCESS![/bold green]")
+                        if result.stdout:
+                            output_preview = result.stdout[:500].strip()
+                            console.print(Panel(
+                                output_preview,
+                                title="[green]Output[/green]",
+                                border_style="green",
+                            ))
+                    else:
+                        console.print(f"  [dim]❌ No success indicators found[/dim]")
+                        if result.stdout and len(result.stdout.strip()) > 0:
+                            output_preview = result.stdout[:200].strip()
+                            console.print(f"  [dim]Output: {output_preview}...[/dim]" if len(result.stdout) > 200 else f"  [dim]Output: {output_preview}[/dim]")
+                    console.print()
+                
                 if exploit_attempt["success"]:
                     results["successful"].append(exploit_attempt)
                     
@@ -634,8 +684,23 @@ Only output the JSON array, no other text."""
             except Exception as e:
                 exploit_attempt["output"] = f"Error: {str(e)}"
                 results["failed"].append(exploit_attempt)
+                if verbose:
+                    console.print(f"  [red]⚠️  Error: {str(e)}[/red]")
+                    console.print()
             
             results["attempted"].append(exploit_attempt)
+        
+        # Summary in verbose mode
+        if verbose:
+            console.print(Panel(
+                f"[bold]Attempted:[/bold] {len(results['attempted'])}\n"
+                f"[bold green]Successful:[/bold green] {len(results['successful'])}\n"
+                f"[bold red]Failed:[/bold red] {len(results['failed'])}\n"
+                f"[bold yellow]Shells:[/bold yellow] {len(results['shells_obtained'])}\n"
+                f"[bold cyan]Data Leaks:[/bold cyan] {len(results['data_obtained'])}",
+                title="[bold]📊 Exploitation Summary[/bold]",
+                border_style="blue",
+            ))
         
         return results
     
