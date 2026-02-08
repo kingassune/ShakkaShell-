@@ -517,38 +517,67 @@ class TestReconAgent:
     
     @pytest.mark.asyncio
     async def test_execute(self, agent):
-        """Test agent execution."""
-        # Mock the LLM response with proper JSON for recon
-        mock_response = '''{
-            "target": "target network",
-            "methodology": "network scan",
-            "findings": {
-                "open_ports": [22, 80, 443],
-                "services": [{"port": 80, "service": "http", "version": "2.4"}],
-                "hostnames": ["example.com"],
-                "vulnerabilities": ["potential XSS"],
-                "notes": "Additional findings"
-            },
-            "commands_to_run": ["nmap -sV target"],
-            "summary": "Scan complete"
+        """Test agent execution with real nmap mocked."""
+        # Mock nmap output - returns a dict, not tuple
+        mock_nmap_output = """Starting Nmap 7.94 ( https://nmap.org ) at 2024-01-01 12:00 UTC
+Nmap scan report for 192.168.1.1
+Host is up (0.001s latency).
+
+PORT     STATE SERVICE VERSION
+22/tcp   open  ssh     OpenSSH 8.9p1 Ubuntu
+80/tcp   open  http    Apache httpd 2.4.52
+443/tcp  open  https   nginx 1.18.0
+
+Service detection performed.
+Nmap done: 1 IP address (1 host up) scanned in 5.00 seconds"""
+        
+        mock_nmap_result = {
+            "command": "nmap -sV -sC 192.168.1.1",
+            "success": True,
+            "output": mock_nmap_output,
+            "stderr": "",
+            "execution_time": 5.0,
+        }
+        
+        # Mock LLM analysis response
+        mock_llm_response = '''{
+            "summary": "Target 192.168.1.1 has 3 open ports with web services",
+            "risk_assessment": "Medium risk due to exposed web services",
+            "recommendations": ["Check for web vulnerabilities", "Review SSH config"]
         }'''
         
-        with patch.object(agent, '_call_llm', return_value=mock_response):
-            result = await agent.run("Scan target network")
-            
-            assert result.success is True
-            assert "Reconnaissance completed" in result.output
-            assert "open_ports" in result.data.get("findings", {})
+        with patch.object(agent, '_run_nmap', return_value=mock_nmap_result):
+            with patch.object(agent, '_call_llm', return_value=mock_llm_response):
+                result = await agent.run("Scan 192.168.1.1 for open ports")
+                
+                assert result.success is True
+                assert result.data.get("target") == "192.168.1.1"
+    
+    @pytest.mark.asyncio
+    async def test_execute_no_target(self, agent):
+        """Test agent fails gracefully when no target in task."""
+        result = await agent.run("Scan target network")
+        
+        assert result.success is False
+        assert "No valid IP address or hostname" in result.error
     
     @pytest.mark.asyncio
     async def test_state_transitions(self, agent):
         """Test state transitions during execution."""
         assert agent.state == AgentState.IDLE
         
-        mock_response = '{"target": "test", "methodology": "test", "findings": {}, "commands_to_run": [], "summary": "done"}'
+        mock_nmap_result = {
+            "command": "nmap -sV -sC 10.0.0.1",
+            "success": True,
+            "output": "Nmap done: 1 IP address scanned",
+            "stderr": "",
+            "execution_time": 1.0,
+        }
+        mock_llm_response = '{"summary": "done", "risk_assessment": "low", "recommendations": []}'
         
-        with patch.object(agent, '_call_llm', return_value=mock_response):
-            await agent.run("Test task")
+        with patch.object(agent, '_run_nmap', return_value=mock_nmap_result):
+            with patch.object(agent, '_call_llm', return_value=mock_llm_response):
+                await agent.run("Scan 10.0.0.1")
         
         assert agent.state == AgentState.COMPLETED
 
@@ -567,22 +596,35 @@ class TestExploitAgent:
     
     @pytest.mark.asyncio
     async def test_execute(self, agent):
-        """Test agent execution."""
+        """Test agent execution with recon context."""
+        # Context format matches what orchestrator passes - previous_results array
+        context = {
+            "previous_results": [{
+                "step": "recon",
+                "data": {
+                    "target": "192.168.1.1",
+                    "parsed_ports": [
+                        {"port": 22, "protocol": "tcp", "service": "ssh", "version": "OpenSSH 8.9p1"},
+                        {"port": 80, "protocol": "tcp", "service": "http", "version": "Apache 2.4.52"}
+                    ],
+                    "raw_output": "Nmap scan results..."
+                }
+            }]
+        }
+        
         mock_response = '''{
-            "vulnerability_assessment": [{"type": "RCE", "severity": "high"}],
-            "recommended_exploits": [{"name": "test", "source": "metasploit"}],
-            "attack_chain": ["step 1"],
-            "payloads": [],
-            "prerequisites": [],
-            "evasion_tips": [],
-            "summary": "Exploitation analysis complete"
+            "target": "192.168.1.1",
+            "services_analyzed": [{"port": 22, "service": "ssh", "version": "OpenSSH 8.9p1"}],
+            "vulnerabilities": [{"service": "http", "port": 80, "cve": "N/A", "severity": "medium", "description": "Web server exposed", "exploitable": true, "exploit_difficulty": "medium"}],
+            "recommended_exploits": [{"name": "apache_mod_cgi", "target_service": "http", "source": "metasploit", "command_hint": "use exploit/multi/http/apache_mod_cgi_bash_env_exec", "success_probability": "medium"}],
+            "attack_chain": ["1. Exploit Apache vulnerability", "2. Gain shell access"],
+            "risk_summary": "Medium risk - web services exposed"
         }'''
         
         with patch.object(agent, '_call_llm', return_value=mock_response):
-            result = await agent.run("Analyze vulnerabilities")
+            result = await agent.run("Analyze vulnerabilities", context=context)
             
             assert result.success is True
-            assert "Exploitation analysis" in result.output
 
 
 class TestPersistenceAgent:
@@ -629,20 +671,51 @@ class TestReporterAgent:
     
     @pytest.mark.asyncio
     async def test_execute(self, agent):
-        """Test agent execution."""
+        """Test agent execution with previous findings context."""
+        # Context matching what orchestrator passes from recon/exploit steps
+        context = {
+            "previous_results": [
+                {
+                    "step": "recon",
+                    "data": {
+                        "target": "192.168.1.1",
+                        "scan_command": "nmap -sV -sC 192.168.1.1",
+                        "parsed_ports": [
+                            {"port": 22, "protocol": "tcp", "service": "ssh", "version": "OpenSSH 8.9p1"},
+                            {"port": 80, "protocol": "tcp", "service": "http", "version": "Apache 2.4.52"}
+                        ],
+                        "raw_output": "Nmap scan results...",
+                        "analysis": {"summary": "Two services found"}
+                    }
+                },
+                {
+                    "step": "exploit",
+                    "data": {
+                        "analysis": {
+                            "vulnerabilities": [{"severity": "medium", "service": "http", "description": "Web server exposed"}],
+                            "recommended_exploits": [],
+                            "summary": "Medium risk target"
+                        }
+                    }
+                }
+            ]
+        }
+        
         mock_response = '''{
-            "report": {
-                "executive_summary": "Test summary",
-                "findings": [],
-                "recommendations": [],
-                "timeline": []
-            },
-            "format": "markdown",
-            "summary": "Report generated"
+            "title": "Penetration Test Report - 192.168.1.1",
+            "date": "2024-01-01",
+            "target": "192.168.1.1",
+            "scope": "Network scan of single host",
+            "executive_summary": "Test summary - medium risk target",
+            "methodology": "nmap service scan",
+            "findings": [],
+            "risk_summary": {"critical": 0, "high": 0, "medium": 1, "low": 0},
+            "recommendations": [{"priority": 1, "action": "Review web server", "rationale": "Exposed service"}],
+            "conclusion": "Target has medium security posture"
         }'''
         
         with patch.object(agent, '_call_llm', return_value=mock_response):
-            result = await agent.run("Generate report")
+            result = await agent.run("Generate report", context=context)
             
             assert result.success is True
             assert "report" in result.data
@@ -704,18 +777,37 @@ class TestOrchestrator:
             AgentRole.REPORTER: reporter_agent,
         }
         
-        # Mock LLM responses for all agents
-        mock_recon = '{"target": "test", "methodology": "scan", "findings": {"open_ports": [80]}, "commands_to_run": [], "summary": "done"}'
-        mock_exploit = '{"vulnerability_assessment": [], "recommended_exploits": [], "attack_chain": [], "payloads": [], "prerequisites": [], "evasion_tips": [], "summary": "done"}'
-        mock_report = '{"report": {"executive_summary": "test"}, "format": "md", "summary": "done"}'
+        # Mock nmap execution for ReconAgent
+        mock_nmap_result = {
+            "command": "nmap -sV -sC 192.168.1.1",
+            "success": True,
+            "output": """Nmap scan report for 192.168.1.1
+PORT   STATE SERVICE VERSION
+80/tcp open  http    Apache 2.4.52""",
+            "stderr": "",
+            "execution_time": 5.0,
+        }
         
-        with patch.object(recon_agent, '_call_llm', return_value=mock_recon):
-            with patch.object(exploit_agent, '_call_llm', return_value=mock_exploit):
-                with patch.object(reporter_agent, '_call_llm', return_value=mock_report):
-                    result = await orchestrator.orchestrate(
-                        "Scan and assess target",
-                        agents=agents,
-                    )
+        # Mock LLM responses for all agents
+        mock_recon_llm = '{"summary": "Found web server", "risk_assessment": "low", "recommendations": []}'
+        mock_exploit = '''{
+            "target": "192.168.1.1",
+            "services_analyzed": [{"port": 80, "service": "http", "version": "Apache 2.4.52"}],
+            "vulnerabilities": [],
+            "recommended_exploits": [],
+            "attack_chain": [],
+            "risk_summary": "Low risk"
+        }'''
+        mock_report = '{"title": "Report", "executive_summary": "test", "findings": [], "risk_summary": {}, "recommendations": [], "conclusion": "done"}'
+        
+        with patch.object(recon_agent, '_run_nmap', return_value=mock_nmap_result):
+            with patch.object(recon_agent, '_call_llm', return_value=mock_recon_llm):
+                with patch.object(exploit_agent, '_call_llm', return_value=mock_exploit):
+                    with patch.object(reporter_agent, '_call_llm', return_value=mock_report):
+                        result = await orchestrator.orchestrate(
+                            "Scan and assess 192.168.1.1",  # Include IP in task
+                            agents=agents,
+                        )
         
         assert result.success is True
         assert "plan" in result.data
@@ -727,10 +819,18 @@ class TestOrchestrator:
         recon_agent = ReconAgent()
         orchestrator.register_agent(recon_agent)
         
-        mock_response = '{"target": "test", "methodology": "scan", "findings": {}, "commands_to_run": [], "summary": "done"}'
+        mock_nmap_result = {
+            "command": "nmap -sV -sC 10.0.0.1",
+            "success": True,
+            "output": "Nmap done: 1 IP scanned",
+            "stderr": "",
+            "execution_time": 1.0,
+        }
+        mock_llm_response = '{"summary": "done", "risk_assessment": "low", "recommendations": []}'
         
-        with patch.object(recon_agent, '_call_llm', return_value=mock_response):
-            result = await orchestrator.run("Scan target")
+        with patch.object(recon_agent, '_run_nmap', return_value=mock_nmap_result):
+            with patch.object(recon_agent, '_call_llm', return_value=mock_llm_response):
+                result = await orchestrator.run("Scan 10.0.0.1")
         
         # Should not crash, but may have incomplete results
         assert result is not None
